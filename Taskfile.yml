@@ -1,0 +1,44 @@
+version: "3"
+
+vars:
+  BIN_DIR: bin
+  BINARY: project_organizer
+
+tasks:
+  default:
+    desc: Run lint, test, and build
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  tidy:
+    desc: Sync go.mod / go.sum
+    cmds:
+      - go mod tidy
+
+  fmt:
+    desc: Format the code
+    cmds:
+      - gofmt -w .
+
+  lint:
+    desc: Run static analysis
+    cmds:
+      - go vet ./...
+      - golangci-lint run
+
+  test:
+    desc: Run the test suite
+    cmds:
+      - go test -race ./...
+
+  build:
+    desc: Compile the binary into {{.BIN_DIR}}
+    cmds:
+      - go build -o {{.BIN_DIR}}/{{.BINARY}} .
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}}
