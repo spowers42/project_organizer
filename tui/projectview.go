@@ -200,7 +200,7 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, task.ID) })
 			v.status = ""
 		}
-	case " ", "enter":
+	case " ":
 		if v.ready() && v.hasTaskSelection() {
 			return v.toggleTask(v.tasks[v.taskSel])
 		}

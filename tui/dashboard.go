@@ -18,8 +18,9 @@ const dashboardTitle = "Project Organizer"
 var defaultDashboardFilter = core.ProjectFilter{Lifecycle: core.Active}
 
 // dashboardModel is the entry screen. It lists the Projects matching the
-// current filter (Active by default — the spec's "in flight"), opens a Project
-// on enter, and hosts the create-Project and filter overlays. No Next step yet.
+// current filter (Active by default — the spec's "in flight"), shows each
+// Active Project's Next step beneath its row, opens a Project on enter, and
+// hosts the create-Project and filter overlays.
 type dashboardModel struct {
 	core      *core.Core
 	projects  []core.Project
@@ -74,25 +75,32 @@ func (d *dashboardModel) Init() tea.Cmd {
 	return tea.Batch(d.loadProjects, loadCategoriesCmd(d.core))
 }
 
-// loadProjects queries core for the Projects matching the current filter and
-// resolves each one's Next step so the list can show where it is waiting.
+// loadProjects queries core for the Projects to show. On the default
+// (Active-only) view it uses core.Dashboard, which pairs each Active Project
+// with its resolved Next step. A narrowed filter can surface non-Active
+// Projects, which have no Next step to show, so that path is a plain list.
 func (d *dashboardModel) loadProjects() tea.Msg {
 	ctx := context.Background()
+	if d.filter == defaultDashboardFilter {
+		rows, err := d.core.Dashboard(ctx)
+		if err != nil {
+			return projectsLoadedMsg{err: err}
+		}
+		projects := make([]core.Project, len(rows))
+		next := make(map[int64]core.Task, len(rows))
+		for i, r := range rows {
+			projects[i] = r.Project
+			if r.NextStep != nil {
+				next[r.Project.ID] = *r.NextStep
+			}
+		}
+		return projectsLoadedMsg{projects: projects, nextSteps: next}
+	}
 	ps, err := d.core.ListProjects(ctx, d.filter)
 	if err != nil {
 		return projectsLoadedMsg{err: err}
 	}
-	next := make(map[int64]core.Task, len(ps))
-	for _, p := range ps {
-		step, ok, err := d.core.NextStep(ctx, p.ID)
-		if err != nil {
-			return projectsLoadedMsg{err: err}
-		}
-		if ok {
-			next[p.ID] = step
-		}
-	}
-	return projectsLoadedMsg{projects: ps, nextSteps: next}
+	return projectsLoadedMsg{projects: ps}
 }
 
 // reload re-runs the Project query; the root model calls it on return from the

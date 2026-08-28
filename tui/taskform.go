@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,11 @@ import (
 // taskDueDateLayout is the date format the Task form accepts for the optional
 // due date. A blank field means no due date.
 const taskDueDateLayout = "2006-01-02"
+
+// errTaskDueDateFormat is returned by taskForm.input when the due-date field
+// holds text that is not a taskDueDateLayout date. The owning screen maps it to
+// a message through errorMessage, like the core.Err* sentinels.
+var errTaskDueDateFormat = errors.New("due date must be YYYY-MM-DD")
 
 // taskFormField identifies the focused row of a taskForm.
 type taskFormField int
@@ -27,23 +33,23 @@ const (
 // optional due date (YYYY-MM-DD). It holds no Core and performs no persistence —
 // the screen that owns it reads input() and calls core.
 type taskForm struct {
-	title string
-	name  textInput
-	due   textInput
-	focus taskFormField
+	heading    string
+	titleInput textInput
+	due        textInput
+	focus      taskFormField
 }
 
-// newTaskForm builds a form. When initial is non-nil it starts in edit mode,
-// pre-filled from that Task; otherwise it is a blank add form.
-func newTaskForm(title string, initial *core.Task) taskForm {
+// newTaskForm builds a form under heading. When initial is non-nil it starts in
+// edit mode, pre-filled from that Task; otherwise it is a blank add form.
+func newTaskForm(heading string, initial *core.Task) taskForm {
 	f := taskForm{
-		title: title,
-		name:  newTextInput(""),
-		due:   newTextInput(""),
-		focus: taskFieldTitle,
+		heading:    heading,
+		titleInput: newTextInput(""),
+		due:        newTextInput(""),
+		focus:      taskFieldTitle,
 	}
 	if initial != nil {
-		f.name = newTextInput(initial.Title)
+		f.titleInput = newTextInput(initial.Title)
 		if initial.DueDate != nil {
 			f.due = newTextInput(initial.DueDate.Format(taskDueDateLayout))
 		}
@@ -85,7 +91,7 @@ func (f *taskForm) update(msg tea.KeyMsg) (done, submitted bool) {
 func (f *taskForm) editFocused(edit func(*textInput)) {
 	switch f.focus {
 	case taskFieldTitle:
-		edit(&f.name)
+		edit(&f.titleInput)
 	case taskFieldDueDate:
 		edit(&f.due)
 	}
@@ -93,17 +99,17 @@ func (f *taskForm) editFocused(edit func(*textInput)) {
 
 // input is the value the form currently describes, ready for core.AddTask /
 // core.EditTask. A blank due-date field yields a nil DueDate; a malformed one
-// is a returned error so the owning screen can surface it and keep the form
+// is errTaskDueDateFormat so the owning screen can surface it and keep the form
 // open. A whitespace-only title is left for core to reject.
 func (f taskForm) input() (core.TaskInput, error) {
-	in := core.TaskInput{Title: f.name.String()}
+	in := core.TaskInput{Title: f.titleInput.String()}
 	raw := strings.TrimSpace(f.due.String())
 	if raw == "" {
 		return in, nil
 	}
 	due, err := time.Parse(taskDueDateLayout, raw)
 	if err != nil {
-		return core.TaskInput{}, fmt.Errorf("due date must be YYYY-MM-DD")
+		return core.TaskInput{}, errTaskDueDateFormat
 	}
 	in.DueDate = &due
 	return in, nil
@@ -112,9 +118,9 @@ func (f taskForm) input() (core.TaskInput, error) {
 // render draws the whole form with the focused row marked.
 func (f taskForm) render() string {
 	var b strings.Builder
-	b.WriteString(f.title)
+	b.WriteString(f.heading)
 	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "%s Title:    %s\n", rowMarker(f.focus == taskFieldTitle), f.name.render(f.focus == taskFieldTitle))
+	fmt.Fprintf(&b, "%s Title:    %s\n", rowMarker(f.focus == taskFieldTitle), f.titleInput.render(f.focus == taskFieldTitle))
 	fmt.Fprintf(&b, "%s Due date: %s\n", rowMarker(f.focus == taskFieldDueDate), f.due.render(f.focus == taskFieldDueDate))
 	b.WriteString("            (YYYY-MM-DD, or blank for none)\n")
 	b.WriteString("\ntab: next field   enter: save   esc: cancel\n")

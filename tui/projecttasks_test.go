@@ -133,6 +133,32 @@ func TestProjectViewEditTaskTitleAndDueDate(t *testing.T) {
 	}
 }
 
+// Editing a Task with a blank due-date field clears an existing due date.
+func TestProjectViewEditTaskClearsDueDate(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCore(t)
+	p := mustProject(t, c, "P")
+	due := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	task, err := c.AddTask(ctx, p.ID, core.TaskInput{Title: "dated", DueDate: &due})
+	if err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+
+	v.Update(key("t"))
+	v.Update(key("tab")) // move to the due-date field
+	for i := 0; i < len(taskDueDateLayout); i++ {
+		v.Update(key("backspace")) // clear the pre-filled date
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	if got := findTask(t, c, p.ID, task.ID); got.DueDate != nil {
+		t.Errorf("DueDate = %v, want nil after clearing the field", got.DueDate)
+	}
+}
+
 // A malformed due date never reaches core: the form stays open with a message.
 func TestProjectViewAddTaskRejectsBadDueDate(t *testing.T) {
 	ctx := context.Background()

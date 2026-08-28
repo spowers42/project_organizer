@@ -20,6 +20,7 @@ func TestErrorMessageMapsTypedCoreErrors(t *testing.T) {
 		{"bad lifecycle", core.ErrInvalidLifecycle, "That is not a valid lifecycle state."},
 		{"empty task title", core.ErrEmptyTaskTitle, "Task title must not be empty."},
 		{"missing task", core.ErrTaskNotFound, "That Task no longer exists."},
+		{"bad due date", errTaskDueDateFormat, "Due date must be written as YYYY-MM-DD."},
 		{"wrapped typed error", errors.Join(errors.New("op failed"), core.ErrProjectNotFound), "That Project no longer exists."},
 		{"unknown error falls through", errors.New("disk on fire"), "disk on fire"},
 	}
