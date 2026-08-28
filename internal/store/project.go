@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/spowers42/project_organizer/core"
 )
@@ -68,6 +69,26 @@ func (s *Store) UpdateProjectLifecycle(ctx context.Context, id int64, lifecycle 
 		"UPDATE projects SET lifecycle = ? WHERE id = ? AND archived_at IS NULL",
 		string(lifecycle), id,
 	)
+}
+
+// ArchiveProject soft-deletes a live Project by stamping archived_at. A Project
+// that is missing or already archived yields core.ErrProjectNotFound.
+func (s *Store) ArchiveProject(ctx context.Context, id int64, at time.Time) error {
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE projects SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
+		at.UTC().Format(time.RFC3339Nano), id,
+	)
+	if err != nil {
+		return fmt.Errorf("archiving project %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("archiving project %d: %w", id, err)
+	}
+	if n == 0 {
+		return core.ErrProjectNotFound
+	}
+	return nil
 }
 
 // updateProject runs an UPDATE and returns the refreshed Project, mapping a

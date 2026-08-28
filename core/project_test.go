@@ -377,3 +377,44 @@ func TestActiveProjectsReturnsExactlyActive(t *testing.T) {
 	}
 	_ = act
 }
+
+func TestArchiveProjectRemovesItFromEveryView(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	other := categoryID(t, c, "Other")
+
+	keep := mustCreateProject(t, c, "keep", other)
+	drop := mustCreateProject(t, c, "drop", other)
+
+	if err := c.ArchiveProject(ctx, drop.ID); err != nil {
+		t.Fatalf("ArchiveProject: %v", err)
+	}
+
+	if _, err := c.GetProject(ctx, drop.ID); !errors.Is(err, core.ErrProjectNotFound) {
+		t.Errorf("GetProject(archived) error = %v, want ErrProjectNotFound", err)
+	}
+	all, err := c.ListProjects(ctx, core.ProjectFilter{})
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if !equalStrings(listNames(all), []string{"keep"}) {
+		t.Errorf("ListProjects after archive = %v, want [keep]", listNames(all))
+	}
+	_ = keep
+}
+
+func TestArchiveProjectUnknownOrAlreadyArchivedErrors(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "once", categoryID(t, c, "Other"))
+
+	if err := c.ArchiveProject(ctx, 99999); !errors.Is(err, core.ErrProjectNotFound) {
+		t.Errorf("ArchiveProject(unknown) = %v, want ErrProjectNotFound", err)
+	}
+	if err := c.ArchiveProject(ctx, p.ID); err != nil {
+		t.Fatalf("first ArchiveProject: %v", err)
+	}
+	if err := c.ArchiveProject(ctx, p.ID); !errors.Is(err, core.ErrProjectNotFound) {
+		t.Errorf("second ArchiveProject = %v, want ErrProjectNotFound", err)
+	}
+}

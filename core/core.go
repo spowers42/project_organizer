@@ -5,7 +5,10 @@
 // boundary.
 package core
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Category classifies a Project or an Idea. The list is shared across both,
 // seeded with Programming, Course, Other, and extendable by the user.
@@ -36,6 +39,9 @@ type Store interface {
 	// ListProjects returns live Projects in creation order. An empty lifecycle
 	// or a zero categoryID is not filtered on.
 	ListProjects(ctx context.Context, lifecycle Lifecycle, categoryID int64) ([]Project, error)
+	// ArchiveProject stamps archived_at on a live Project, reporting
+	// ErrProjectNotFound when no live row matches.
+	ArchiveProject(ctx context.Context, id int64, at time.Time) error
 }
 
 // Core holds the injected dependencies and exposes the application operations.

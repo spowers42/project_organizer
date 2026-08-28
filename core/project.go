@@ -125,6 +125,15 @@ func (c *Core) GetProject(ctx context.Context, id int64) (Project, error) {
 	return c.store.GetProject(ctx, id)
 }
 
+// ArchiveProject soft-deletes a Project into the Archive: it disappears from
+// every normal view (dashboard, Project list, lookups) but is not destroyed and
+// can be recovered through the archive CLI. ErrProjectNotFound if id does not
+// name a live Project. Cascading to a Project's Milestones and Tasks arrives
+// with those entities.
+func (c *Core) ArchiveProject(ctx context.Context, id int64) error {
+	return c.store.ArchiveProject(ctx, id, c.clock.Now())
+}
+
 // ListProjects returns the Projects matching filter, in creation order. An
 // empty filter returns every live Project. A non-empty but unknown Lifecycle
 // filter is ErrInvalidLifecycle.
