@@ -8,6 +8,32 @@ import (
 	"github.com/spowers42/project_organizer/core"
 )
 
+// bodyTaskTitles is the loose-Task titles from a body slice, in order, skipping
+// any Milestone slots.
+func bodyTaskTitles(body []core.BodyEntry) []string {
+	var out []string
+	for _, e := range body {
+		if e.Kind == core.TaskEntry {
+			out = append(out, e.Task.Title)
+		}
+	}
+	return out
+}
+
+// bodyLabels renders a body slice as "task:<title>" / "ms:<name>" entries, so a
+// test can assert the interleaved order.
+func bodyLabels(body []core.BodyEntry) []string {
+	out := make([]string, len(body))
+	for i, e := range body {
+		if e.Kind == core.MilestoneEntry {
+			out[i] = "ms:" + e.Milestone.Name
+		} else {
+			out[i] = "task:" + e.Task.Title
+		}
+	}
+	return out
+}
+
 // seedBody creates a Project with three loose Tasks in a known order and
 // returns the Project plus the three Tasks.
 func seedBody(t *testing.T, c *core.Core) (core.Project, core.Task, core.Task, core.Task) {
@@ -28,8 +54,8 @@ func TestMoveTaskUpSwapsWithThePrecedingEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MoveTask(up): %v", err)
 	}
-	if !equalStrings(taskTitles(got), []string{"second", "first", "third"}) {
-		t.Errorf("returned order = %v, want second moved ahead of first", taskTitles(got))
+	if !equalStrings(bodyTaskTitles(got), []string{"second", "first", "third"}) {
+		t.Errorf("returned order = %v, want second moved ahead of first", bodyTaskTitles(got))
 	}
 
 	// The new order is the stored order, not a transient sort.
@@ -69,8 +95,8 @@ func TestMoveTaskUpFromTheFirstSlotIsANoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MoveTask(up) at the top: %v", err)
 	}
-	if !equalStrings(taskTitles(got), []string{"first", "second", "third"}) {
-		t.Errorf("order = %v, want it unchanged past the top edge", taskTitles(got))
+	if !equalStrings(bodyTaskTitles(got), []string{"first", "second", "third"}) {
+		t.Errorf("order = %v, want it unchanged past the top edge", bodyTaskTitles(got))
 	}
 
 	reloaded, err := c.ProjectTasks(ctx, p.ID)
@@ -91,8 +117,8 @@ func TestMoveTaskDownFromTheLastSlotIsANoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MoveTask(down) at the bottom: %v", err)
 	}
-	if !equalStrings(taskTitles(got), []string{"first", "second", "third"}) {
-		t.Errorf("order = %v, want it unchanged past the bottom edge", taskTitles(got))
+	if !equalStrings(bodyTaskTitles(got), []string{"first", "second", "third"}) {
+		t.Errorf("order = %v, want it unchanged past the bottom edge", bodyTaskTitles(got))
 	}
 
 	reloaded, err := c.ProjectTasks(ctx, p.ID)

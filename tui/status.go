@@ -24,6 +24,10 @@ func errorMessage(err error) string {
 		return "Task title must not be empty."
 	case errors.Is(err, core.ErrTaskNotFound):
 		return "That Task no longer exists."
+	case errors.Is(err, core.ErrEmptyMilestoneName):
+		return "Milestone name must not be empty."
+	case errors.Is(err, core.ErrMilestoneNotFound):
+		return "That Milestone no longer exists."
 	case errors.Is(err, errTaskDueDateFormat):
 		return "Due date must be written as YYYY-MM-DD."
 	default:
