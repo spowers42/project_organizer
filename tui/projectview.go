@@ -21,9 +21,7 @@ type projectViewModel struct {
 	loaded    bool
 	loadErr   error
 	status    string
-	form      *projectForm
-	lifeUI    *picker
-	confirmUI *confirm
+	overlay   overlayHost
 }
 
 // newProjectView builds the screen bound to one Project id; Init loads it.
@@ -93,8 +91,7 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 			v.status = errorMessage(msg.err)
 			return nil // keep the overlay open to fix and retry
 		}
-		v.form = nil
-		v.lifeUI = nil
+		v.overlay.close()
 		v.status = "Saved."
 		return v.loadProject
 	case projectArchivedMsg:
@@ -113,40 +110,8 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 
 // handleKey routes a key to the open overlay, or to the screen's own actions.
 func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
-	if v.form != nil {
-		done, submitted := v.form.update(msg)
-		if !done {
-			return nil
-		}
-		if !submitted {
-			v.form = nil
-			return nil
-		}
-		return v.editProject(v.form.input())
-	}
-	if v.lifeUI != nil {
-		switch msg.String() {
-		case "esc":
-			v.lifeUI = nil
-		case "up", "k", "left":
-			v.lifeUI.up()
-		case "down", "j", "right":
-			v.lifeUI.down()
-		case "enter":
-			return v.setLifecycle(lifecycleOrder[v.lifeUI.selectedIndex()])
-		}
-		return nil
-	}
-	if v.confirmUI != nil {
-		done, confirmed := v.confirmUI.update(msg)
-		if !done {
-			return nil
-		}
-		v.confirmUI = nil
-		if confirmed {
-			return v.archiveProject()
-		}
-		return nil
+	if cmd, handled := v.overlay.handleKey(msg); handled {
+		return cmd
 	}
 
 	switch msg.String() {
@@ -158,13 +123,16 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if v.ready() {
 			p := v.project
 			f := newProjectForm("Edit Project", v.cats, &p)
-			v.form = &f
+			v.overlay.open(&f, func() tea.Cmd { return v.editProject(f.input()) })
 			v.status = ""
 		}
 	case "s":
 		if v.ready() {
-			p := newPicker(lifecycleLabels(), lifecycleIndex(v.project.Lifecycle))
-			v.lifeUI = &p
+			lo := newListOverlay(lifecycleLabels(), lifecycleIndex(v.project.Lifecycle),
+				"Set lifecycle state", "↑/↓: choose   enter: set   esc: cancel")
+			v.overlay.open(&lo, func() tea.Cmd {
+				return v.setLifecycle(lifecycleOrder[lo.selectedIndex()])
+			})
 			v.status = ""
 		}
 	case "d":
@@ -172,7 +140,7 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 			cu := newConfirm(fmt.Sprintf(
 				"Archive %q? It moves to the Archive and leaves every view. Recover it with the archive CLI.",
 				v.project.Name))
-			v.confirmUI = &cu
+			v.overlay.open(&cu, func() tea.Cmd { return v.archiveProject() })
 			v.status = ""
 		}
 	}
@@ -187,15 +155,8 @@ func (v *projectViewModel) ready() bool {
 
 // View renders the Project view or whichever overlay is open.
 func (v *projectViewModel) View() string {
-	if v.form != nil {
-		return v.form.render() + statusBlock(v.status)
-	}
-	if v.lifeUI != nil {
-		return "Set lifecycle state\n\n" + v.lifeUI.render() +
-			"\n↑/↓: choose   enter: set   esc: cancel\n" + statusBlock(v.status)
-	}
-	if v.confirmUI != nil {
-		return v.confirmUI.render() + "\n←/→: choose   y/n: answer   esc: cancel\n" + statusBlock(v.status)
+	if v.overlay.active() {
+		return v.overlay.render() + statusBlock(v.status)
 	}
 	if !v.loaded {
 		return "Loading Project…\n"
