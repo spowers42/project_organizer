@@ -16,10 +16,26 @@ type Category struct {
 
 // Store is the persistence dependency injected into Core. It is backed by
 // SQLite in production and by a temp-file database in tests; Core never sees the
-// concrete type.
+// concrete type. Core does the domain validation; Store persists what it is
+// given and reports ErrProjectNotFound when an update or read matches no live
+// row.
 type Store interface {
 	// ListCategories returns every Category in seed order.
 	ListCategories(ctx context.Context) ([]Category, error)
+	// CategoryExists reports whether a Category with the given id exists.
+	CategoryExists(ctx context.Context, id int64) (bool, error)
+
+	// CreateProject inserts a Project and returns it as stored.
+	CreateProject(ctx context.Context, name, description string, categoryID int64, lifecycle Lifecycle) (Project, error)
+	// UpdateProject rewrites a live Project's name, description, and Category.
+	UpdateProject(ctx context.Context, id int64, name, description string, categoryID int64) (Project, error)
+	// UpdateProjectLifecycle moves a live Project to lifecycle.
+	UpdateProjectLifecycle(ctx context.Context, id int64, lifecycle Lifecycle) (Project, error)
+	// GetProject reads one live Project by id.
+	GetProject(ctx context.Context, id int64) (Project, error)
+	// ListProjects returns live Projects in creation order. An empty lifecycle
+	// or a zero categoryID is not filtered on.
+	ListProjects(ctx context.Context, lifecycle Lifecycle, categoryID int64) ([]Project, error)
 }
 
 // Core holds the injected dependencies and exposes the application operations.

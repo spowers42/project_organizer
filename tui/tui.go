@@ -3,6 +3,10 @@
 package tui
 
 import (
+	"context"
+	"fmt"
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spowers42/project_organizer/core"
@@ -15,24 +19,45 @@ func Run(c *core.Core) error {
 	return err
 }
 
-// dashboard is the entry screen: it lists every Active Project with its Next
-// step and offers Do Next. There are no Projects yet, so it renders the empty
-// state. It holds the Core it will query once Projects exist.
+// dashboard is the entry screen: it lists every Active Project ("in flight"
+// work) and will offer Do Next. Next step resolution is a later ticket. It
+// holds the Core it queries for the Active Project list.
 type dashboard struct {
-	core *core.Core
+	core     *core.Core
+	projects []core.Project
+	loadErr  error
 }
 
 func newDashboard(c *core.Core) dashboard {
 	return dashboard{core: c}
 }
 
-// Init has nothing to load yet; Projects arrive in a later ticket.
-func (d dashboard) Init() tea.Cmd { return nil }
+// projectsLoadedMsg carries the result of the initial Active Projects load.
+type projectsLoadedMsg struct {
+	projects []core.Project
+	err      error
+}
 
-// Update handles quit. There is no other interaction yet.
+// Init kicks off the Active Projects load.
+func (d dashboard) Init() tea.Cmd {
+	return d.loadProjects
+}
+
+func (d dashboard) loadProjects() tea.Msg {
+	projects, err := d.core.ActiveProjects(context.Background())
+	return projectsLoadedMsg{projects: projects, err: err}
+}
+
+// Update stores the loaded Projects and handles quit. There is no other
+// interaction yet.
 func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
-		switch key.String() {
+	switch msg := msg.(type) {
+	case projectsLoadedMsg:
+		d.projects = msg.projects
+		d.loadErr = msg.err
+		return d, nil
+	case tea.KeyMsg:
+		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return d, tea.Quit
 		}
@@ -40,13 +65,32 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return d, nil
 }
 
-// View renders the dashboard. There are no Projects yet, so it always renders
-// the empty state; it must not panic.
+// View renders the dashboard. It must not panic with no Projects loaded.
 func (d dashboard) View() string {
-	return renderDashboard()
+	if d.loadErr != nil {
+		return renderDashboardError(d.loadErr)
+	}
+	return renderDashboard(d.projects)
 }
 
-func renderDashboard() string {
-	const title = "Project Organizer"
-	return title + "\n\nNo Active Projects yet.\n\nPress q to quit.\n"
+const dashboardTitle = "Project Organizer"
+
+func renderDashboard(projects []core.Project) string {
+	var b strings.Builder
+	b.WriteString(dashboardTitle)
+	b.WriteString("\n\n")
+	if len(projects) == 0 {
+		b.WriteString("No Active Projects yet.\n")
+	} else {
+		b.WriteString("Active Projects:\n")
+		for _, p := range projects {
+			fmt.Fprintf(&b, "  • %s\n", p.Name)
+		}
+	}
+	b.WriteString("\nPress q to quit.\n")
+	return b.String()
+}
+
+func renderDashboardError(err error) string {
+	return fmt.Sprintf("%s\n\nCould not load Projects: %v\n\nPress q to quit.\n", dashboardTitle, err)
 }

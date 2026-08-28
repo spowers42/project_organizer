@@ -71,6 +71,10 @@ _Avoid_: importance, severity, rank
 
 ## Project lifecycle states
 
+A newly created Project starts in **Active** — the user creates a Project when
+they are committing to it, so no state needs to be chosen. (Not-yet-committed
+things are captured as Ideas.)
+
 **Active**:
 Currently being worked on. This is what "in flight" on the dashboard means.
 
