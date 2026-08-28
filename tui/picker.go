@@ -31,6 +31,7 @@ func (p *picker) down() {
 	p.clamp()
 }
 
+// clamp pulls a stray selection back into range (or to zero for an empty list).
 func (p *picker) clamp() {
 	if p.selected < 0 || len(p.items) == 0 {
 		p.selected = 0

@@ -3,75 +3,35 @@ package tui
 import (
 	"strings"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-func key(s string) tea.KeyMsg {
-	switch s {
-	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
-	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
-	case "tab":
-		return tea.KeyMsg{Type: tea.KeyTab}
-	case "left":
-		return tea.KeyMsg{Type: tea.KeyLeft}
-	case "right":
-		return tea.KeyMsg{Type: tea.KeyRight}
-	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
-	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
-	case "backspace":
-		return tea.KeyMsg{Type: tea.KeyBackspace}
-	case "shift+tab":
-		return tea.KeyMsg{Type: tea.KeyShiftTab}
-	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
-	}
-}
-
-func typeString(s string) []tea.KeyMsg {
-	msgs := make([]tea.KeyMsg, 0, len(s))
-	for _, r := range s {
-		msgs = append(msgs, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-	}
-	return msgs
-}
-
-func TestConfirmYesAndNoShortcuts(t *testing.T) {
-	c := newConfirm("Delete it?")
-	done, confirmed := c.update(key("y"))
-	if !done || !confirmed {
-		t.Errorf("y => done=%v confirmed=%v, want true/true", done, confirmed)
+func TestConfirmAnswerShortcuts(t *testing.T) {
+	tests := []struct {
+		name          string
+		keys          []string
+		wantDone      bool
+		wantConfirmed bool
+	}{
+		{"y confirms", []string{"y"}, true, true},
+		{"n declines", []string{"n"}, true, false},
+		{"esc dismisses", []string{"esc"}, true, false},
+		{"enter takes the default (No)", []string{"enter"}, true, false},
+		{"toggle then enter confirms", []string{"right", "enter"}, true, true},
+		{"a stray key does nothing", []string{"x"}, false, false},
 	}
 
-	c = newConfirm("Delete it?")
-	done, confirmed = c.update(key("n"))
-	if !done || confirmed {
-		t.Errorf("n => done=%v confirmed=%v, want true/false", done, confirmed)
-	}
-
-	c = newConfirm("Delete it?")
-	done, confirmed = c.update(key("esc"))
-	if !done || confirmed {
-		t.Errorf("esc => done=%v confirmed=%v, want true/false", done, confirmed)
-	}
-}
-
-func TestConfirmEnterTakesTheHighlightedChoice(t *testing.T) {
-	c := newConfirm("Proceed?")
-	done, confirmed := c.update(key("enter"))
-	if !done || confirmed {
-		t.Errorf("enter with default => done=%v confirmed=%v, want true/false", done, confirmed)
-	}
-
-	c = newConfirm("Proceed?")
-	c.update(key("right")) // toggle to Yes
-	done, confirmed = c.update(key("enter"))
-	if !done || !confirmed {
-		t.Errorf("toggle then enter => done=%v confirmed=%v, want true/true", done, confirmed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newConfirm("Proceed?")
+			var done, confirmed bool
+			for _, k := range tt.keys {
+				done, confirmed = c.update(key(k))
+			}
+			if done != tt.wantDone || confirmed != tt.wantConfirmed {
+				t.Errorf("keys %v => done=%v confirmed=%v, want %v/%v",
+					tt.keys, done, confirmed, tt.wantDone, tt.wantConfirmed)
+			}
+		})
 	}
 }
 

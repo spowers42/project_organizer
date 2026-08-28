@@ -43,6 +43,7 @@ func Run(c *core.Core) error {
 	return err
 }
 
+// newModel builds the root model on the dashboard screen.
 func newModel(c *core.Core) *model {
 	return &model{core: c, screen: screenDashboard, dash: newDashboard(c)}
 }

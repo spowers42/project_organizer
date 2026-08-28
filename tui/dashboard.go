@@ -12,6 +12,11 @@ import (
 
 const dashboardTitle = "Project Organizer"
 
+// defaultDashboardFilter is what the dashboard shows until the user narrows it:
+// exactly the Active Projects — the spec's "in flight" work. The `c` key
+// returns to it from any other filter.
+var defaultDashboardFilter = core.ProjectFilter{Lifecycle: core.Active}
+
 // dashboardModel is the entry screen. It lists the Projects matching the
 // current filter (Active by default — the spec's "in flight"), opens a Project
 // on enter, and hosts the create-Project and filter overlays. No Next step yet.
@@ -27,8 +32,19 @@ type dashboardModel struct {
 	filterUI *filterForm
 }
 
+// newDashboard builds the screen with the default (Active-only) filter; Init
+// runs the first load.
 func newDashboard(c *core.Core) *dashboardModel {
-	return &dashboardModel{core: c, filter: core.ProjectFilter{Lifecycle: core.Active}}
+	return &dashboardModel{core: c, filter: defaultDashboardFilter}
+}
+
+// loadCategoriesCmd reads the shared Category list. Both screens load it once
+// for their overlays.
+func loadCategoriesCmd(c *core.Core) tea.Cmd {
+	return func() tea.Msg {
+		cs, err := c.ListCategories(context.Background())
+		return categoriesLoadedMsg{cats: cs, err: err}
+	}
 }
 
 // projectsLoadedMsg carries the result of a Project list load.
@@ -52,17 +68,13 @@ type projectSavedMsg struct {
 
 // Init loads the filtered Projects and the Category list.
 func (d *dashboardModel) Init() tea.Cmd {
-	return tea.Batch(d.loadProjects, d.loadCategories)
+	return tea.Batch(d.loadProjects, loadCategoriesCmd(d.core))
 }
 
+// loadProjects queries core for the Projects matching the current filter.
 func (d *dashboardModel) loadProjects() tea.Msg {
 	ps, err := d.core.ListProjects(context.Background(), d.filter)
 	return projectsLoadedMsg{projects: ps, err: err}
-}
-
-func (d *dashboardModel) loadCategories() tea.Msg {
-	cs, err := d.core.ListCategories(context.Background())
-	return categoriesLoadedMsg{cats: cs, err: err}
 }
 
 // reload re-runs the Project query; the root model calls it on return from the
@@ -71,6 +83,7 @@ func (d *dashboardModel) reload() tea.Cmd {
 	return d.loadProjects
 }
 
+// createProject persists a new Project from the form's fields.
 func (d *dashboardModel) createProject(in core.ProjectInput) tea.Cmd {
 	return func() tea.Msg {
 		_, err := d.core.CreateProject(context.Background(), in)
@@ -108,6 +121,8 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// handleKey routes a key to the open overlay, or to the dashboard's own
+// navigation and actions.
 func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch {
 	case d.form != nil:
@@ -158,6 +173,13 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "f":
 		ff := newFilterForm(d.cats, d.filter)
 		d.filterUI = &ff
+	case "c":
+		if d.filter != defaultDashboardFilter {
+			d.filter = defaultDashboardFilter
+			d.sel = 0
+			d.status = ""
+			return d.reload()
+		}
 	}
 	return nil
 }
@@ -171,16 +193,26 @@ func (d *dashboardModel) View() string {
 		return d.filterUI.render() + statusBlock(d.status)
 	}
 
+	filtered := d.filter != defaultDashboardFilter
+
 	var b strings.Builder
 	b.WriteString(dashboardTitle + "\n")
-	b.WriteString("Filter: " + filterLabel(d.filter, d.cats) + "\n\n")
+	scope := "Showing: Active Projects (in flight)"
+	if filtered {
+		scope = "Showing: " + filterLabel(d.filter, d.cats)
+	}
+	b.WriteString(scope + "\n\n")
 	if d.loadErr != nil {
 		b.WriteString("Could not load Projects: " + d.loadErr.Error() + "\n")
 	} else {
 		b.WriteString(renderProjectRows(d.projects, d.sel))
 	}
 	b.WriteString(statusBlock(d.status))
-	b.WriteString("\n↑/↓: select   enter: open   n: new Project   f: filter   q: quit\n")
+	hints := "\n↑/↓: select   enter: open   n: new Project   f: filter   q: quit\n"
+	if filtered {
+		hints = "\n↑/↓: select   enter: open   n: new Project   f: filter   c: back to Active   q: quit\n"
+	}
+	b.WriteString(hints)
 	return b.String()
 }
 

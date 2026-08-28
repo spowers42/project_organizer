@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,39 +8,24 @@ import (
 	"github.com/spowers42/project_organizer/core"
 )
 
-// lifecycleFilterOptions are the rows of the lifecycle filter picker, paired
-// with the core.Lifecycle each selects. The empty Lifecycle ("All") means no
-// constraint.
-var lifecycleFilterOptions = []struct {
-	label string
-	value core.Lifecycle
-}{
-	{"All", ""},
-	{"Active", core.Active},
-	{"Paused", core.Paused},
-	{"Someday", core.Someday},
-	{"Done", core.Done},
-	{"Abandoned", core.Abandoned},
-}
-
 // filterForm chooses a lifecycle-state and/or Category constraint for the
 // dashboard's Project list. It holds no Core; the dashboard reads filter() and
 // re-queries.
 type filterForm struct {
-	lifecycle picker
-	category  picker
-	catIDs    []int64 // parallel to category rows; 0 == "All"
-	focus     int     // 0 == lifecycle, 1 == category
+	lifecycle  picker
+	lifeValues []core.Lifecycle // parallel to lifecycle rows; "" == "All"
+	category   picker
+	catIDs     []int64 // parallel to category rows; 0 == "All"
+	focus      int     // 0 == lifecycle, 1 == category
 }
 
 // newFilterForm builds the overlay pre-set to current so reopening it shows
 // the constraint already in effect.
 func newFilterForm(categories []core.Category, current core.ProjectFilter) filterForm {
-	lifeLabels := make([]string, len(lifecycleFilterOptions))
+	lifeLabels, lifeValues := lifecycleFilterRows()
 	lifeStart := 0
-	for i, o := range lifecycleFilterOptions {
-		lifeLabels[i] = o.label
-		if o.value == current.Lifecycle {
+	for i, v := range lifeValues {
+		if v == current.Lifecycle {
 			lifeStart = i
 		}
 	}
@@ -60,9 +44,10 @@ func newFilterForm(categories []core.Category, current core.ProjectFilter) filte
 	}
 
 	return filterForm{
-		lifecycle: newPicker(lifeLabels, lifeStart),
-		category:  newPicker(catLabels, catStart),
-		catIDs:    catIDs,
+		lifecycle:  newPicker(lifeLabels, lifeStart),
+		lifeValues: lifeValues,
+		category:   newPicker(catLabels, catStart),
+		catIDs:     catIDs,
 	}
 }
 
@@ -88,6 +73,7 @@ func (f *filterForm) update(msg tea.KeyMsg) (done, applied bool) {
 	}
 }
 
+// active is the picker the focus is currently on.
 func (f *filterForm) active() *picker {
 	if f.focus == 1 {
 		return &f.category
@@ -97,7 +83,10 @@ func (f *filterForm) active() *picker {
 
 // filter is the constraint the overlay currently describes.
 func (f filterForm) filter() core.ProjectFilter {
-	life := lifecycleFilterOptions[f.lifecycle.selectedIndex()].value
+	var life core.Lifecycle
+	if i := f.lifecycle.selectedIndex(); i >= 0 && i < len(f.lifeValues) {
+		life = f.lifeValues[i]
+	}
 	var catID int64
 	if i := f.category.selectedIndex(); i >= 0 && i < len(f.catIDs) {
 		catID = f.catIDs[i]
@@ -125,7 +114,7 @@ func filterLabel(f core.ProjectFilter, categories []core.Category) string {
 	}
 	cat := "all Categories"
 	if f.CategoryID != 0 {
-		cat = "Category #" + strconv.FormatInt(f.CategoryID, 10)
+		cat = "one Category"
 		for _, c := range categories {
 			if c.ID == f.CategoryID {
 				cat = c.Name

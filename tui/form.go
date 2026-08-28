@@ -104,6 +104,8 @@ func (f *projectForm) update(msg tea.KeyMsg) (done, submitted bool) {
 	}
 }
 
+// editFocused applies edit to whichever text field currently holds focus. It
+// is a no-op when the Category picker is focused.
 func (f *projectForm) editFocused(edit func(*textInput)) {
 	switch f.focus {
 	case fieldName:
@@ -143,6 +145,8 @@ func (f projectForm) render() string {
 	return b.String()
 }
 
+// rowMarker is the caret or blank gutter that marks a form / overlay row as
+// focused.
 func rowMarker(focused bool) string {
 	if focused {
 		return ">"
@@ -150,6 +154,8 @@ func rowMarker(focused bool) string {
 	return " "
 }
 
+// indentLines prefixes every non-trailing line of s with prefix and keeps a
+// single trailing newline.
 func indentLines(s, prefix string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i, l := range lines {

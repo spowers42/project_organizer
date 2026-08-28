@@ -2,54 +2,13 @@ package tui
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spowers42/project_organizer/core"
-	"github.com/spowers42/project_organizer/internal/store"
 )
-
-// newTestCore wires a Core over a fresh temp-file database.
-func newTestCore(t *testing.T) *core.Core {
-	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "organizer.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	return core.New(st, core.SystemClock{}, core.NewRand(1))
-}
-
-func firstCategoryID(t *testing.T, c *core.Core) int64 {
-	t.Helper()
-	cats, err := c.ListCategories(context.Background())
-	if err != nil {
-		t.Fatalf("ListCategories: %v", err)
-	}
-	if len(cats) == 0 {
-		t.Fatal("no seeded Categories")
-	}
-	return cats[0].ID
-}
-
-// drainInit runs the commands from a screen's Init to completion and feeds the
-// resulting messages back into Update, so the screen reaches its loaded state.
-func drainInit(update func(tea.Msg) tea.Cmd, cmd tea.Cmd) {
-	if cmd == nil {
-		return
-	}
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		for _, c := range batch {
-			update(c())
-		}
-		return
-	}
-	update(msg)
-}
 
 func TestRenderProjectRowsEmptyState(t *testing.T) {
 	got := renderProjectRows(nil, 0)
@@ -78,13 +37,28 @@ func TestDashboardViewDoesNotPanicWithNoCore(t *testing.T) {
 	}
 }
 
+// TestRootModelSmoke exercises the wiring the real program uses: build the root
+// model, run its Init load, render, then push a few keys through Update. It
+// stops short of tea.Program.Run, which needs a TTY.
 func TestRootModelSmoke(t *testing.T) {
 	m := newModel(newTestCore(t))
-	if m.Init() == nil {
-		t.Error("Init() = nil, want a load command")
+
+	initCmd := m.Init()
+	if initCmd == nil {
+		t.Fatal("Init() = nil, want a load command")
 	}
+	drainInit(func(msg tea.Msg) tea.Cmd { _, cmd := m.Update(msg); return cmd }, initCmd)
+
 	if m.View() == "" {
-		t.Error("View() returned empty string")
+		t.Fatal("View() returned empty string after init")
+	}
+	for _, k := range []string{"down", "up", "n", "esc", "f", "esc", "q"} {
+		if _, cmd := m.Update(key(k)); cmd != nil {
+			cmd() // run it; must not panic
+		}
+		if m.View() == "" {
+			t.Fatalf("View() empty after key %q", k)
+		}
 	}
 }
 
@@ -204,6 +178,22 @@ func TestDashboardFilterOverlayWidensToPaused(t *testing.T) {
 	}
 	if len(d.projects) != 1 || d.projects[0].ID != p.ID {
 		t.Errorf("projects after filter = %+v, want the Paused one", d.projects)
+	}
+
+	// `c` returns the dashboard to its default Active-only view.
+	cmd = d.Update(key("c"))
+	if cmd == nil {
+		t.Fatal("c produced no reload command while a filter was active")
+	}
+	d.Update(cmd())
+	if d.filter != defaultDashboardFilter {
+		t.Errorf("filter after c = %+v, want the default (Active) filter", d.filter)
+	}
+	if len(d.projects) != 0 {
+		t.Errorf("projects after c = %+v, want the Paused Project excluded again", d.projects)
+	}
+	if d.Update(key("c")) != nil {
+		t.Error("c on the default view should be a no-op (no reload)")
 	}
 }
 

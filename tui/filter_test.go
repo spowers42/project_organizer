@@ -53,13 +53,24 @@ func TestFilterFormAllSelectionsClearTheConstraint(t *testing.T) {
 }
 
 func TestFilterFormApplyAndCancelReport(t *testing.T) {
-	f := newFilterForm(testCategories(), core.ProjectFilter{})
-	if done, applied := f.update(key("enter")); !done || !applied {
-		t.Errorf("enter => done=%v applied=%v, want true/true", done, applied)
+	tests := []struct {
+		name        string
+		key         string
+		wantDone    bool
+		wantApplied bool
+	}{
+		{"enter applies", "enter", true, true},
+		{"esc cancels", "esc", true, false},
+		{"other key is inert", "x", false, false},
 	}
-	f = newFilterForm(testCategories(), core.ProjectFilter{})
-	if done, applied := f.update(key("esc")); !done || applied {
-		t.Errorf("esc => done=%v applied=%v, want true/false", done, applied)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFilterForm(testCategories(), core.ProjectFilter{})
+			done, applied := f.update(key(tt.key))
+			if done != tt.wantDone || applied != tt.wantApplied {
+				t.Errorf("%s => done=%v applied=%v, want %v/%v", tt.key, done, applied, tt.wantDone, tt.wantApplied)
+			}
+		})
 	}
 }
 
@@ -70,5 +81,12 @@ func TestFilterLabelSummarisesTheConstraint(t *testing.T) {
 	got := filterLabel(core.ProjectFilter{Lifecycle: core.Active, CategoryID: 20}, testCategories())
 	if !strings.Contains(got, "Active") || !strings.Contains(got, "Course") {
 		t.Errorf("label = %q, want it to name the state and Category", got)
+	}
+
+	// An id absent from the list (e.g. Categories failed to load) must not leak
+	// a raw number into the header.
+	got = filterLabel(core.ProjectFilter{CategoryID: 999}, testCategories())
+	if strings.Contains(got, "999") || strings.Contains(got, "#") {
+		t.Errorf("label = %q, want a neutral placeholder, not a raw id", got)
 	}
 }

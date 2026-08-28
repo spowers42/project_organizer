@@ -7,14 +7,6 @@ import (
 	"github.com/spowers42/project_organizer/core"
 )
 
-func testCategories() []core.Category {
-	return []core.Category{
-		{ID: 10, Name: "Programming"},
-		{ID: 20, Name: "Course"},
-		{ID: 30, Name: "Other"},
-	}
-}
-
 func TestProjectFormCreateModeStartsBlankOnTheFirstCategory(t *testing.T) {
 	f := newProjectForm("New Project", testCategories(), nil)
 
@@ -99,16 +91,24 @@ func TestProjectFormCategoryChoiceChangesTheInput(t *testing.T) {
 }
 
 func TestProjectFormSubmitAndCancelReport(t *testing.T) {
-	f := newProjectForm("New Project", testCategories(), nil)
-	done, submitted := f.update(key("enter"))
-	if !done || !submitted {
-		t.Errorf("enter => done=%v submitted=%v, want true/true", done, submitted)
+	tests := []struct {
+		name          string
+		key           string
+		wantDone      bool
+		wantSubmitted bool
+	}{
+		{"enter submits", "enter", true, true},
+		{"esc cancels", "esc", true, false},
+		{"tab stays open", "tab", false, false},
 	}
-
-	f = newProjectForm("New Project", testCategories(), nil)
-	done, submitted = f.update(key("esc"))
-	if !done || submitted {
-		t.Errorf("esc => done=%v submitted=%v, want true/false", done, submitted)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newProjectForm("New Project", testCategories(), nil)
+			done, submitted := f.update(key(tt.key))
+			if done != tt.wantDone || submitted != tt.wantSubmitted {
+				t.Errorf("%s => done=%v submitted=%v, want %v/%v", tt.key, done, submitted, tt.wantDone, tt.wantSubmitted)
+			}
+		})
 	}
 }
 

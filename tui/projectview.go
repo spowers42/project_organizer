@@ -3,19 +3,12 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spowers42/project_organizer/core"
 )
-
-// lifecycleOrder is the order the five lifecycle states appear in the "set
-// lifecycle" picker.
-var lifecycleOrder = []core.Lifecycle{
-	core.Active, core.Paused, core.Someday, core.Done, core.Abandoned,
-}
 
 // projectViewModel is the second screen: one Project's fields, with actions to
 // edit them and to move the Project through its lifecycle. It reads core and
@@ -32,6 +25,7 @@ type projectViewModel struct {
 	lifeUI    *picker
 }
 
+// newProjectView builds the screen bound to one Project id; Init loads it.
 func newProjectView(c *core.Core, id int64) *projectViewModel {
 	return &projectViewModel{core: c, projectID: id}
 }
@@ -44,19 +38,16 @@ type projectLoadedMsg struct {
 
 // Init loads the Project and the shared Category list.
 func (v *projectViewModel) Init() tea.Cmd {
-	return tea.Batch(v.loadProject, v.loadCategories)
+	return tea.Batch(v.loadProject, loadCategoriesCmd(v.core))
 }
 
+// loadProject reads the viewed Project by id.
 func (v *projectViewModel) loadProject() tea.Msg {
 	p, err := v.core.GetProject(context.Background(), v.projectID)
 	return projectLoadedMsg{project: p, err: err}
 }
 
-func (v *projectViewModel) loadCategories() tea.Msg {
-	cs, err := v.core.ListCategories(context.Background())
-	return categoriesLoadedMsg{cats: cs, err: err}
-}
-
+// editProject persists the form's fields onto the viewed Project.
 func (v *projectViewModel) editProject(in core.ProjectInput) tea.Cmd {
 	return func() tea.Msg {
 		_, err := v.core.EditProject(context.Background(), v.projectID, in)
@@ -64,6 +55,7 @@ func (v *projectViewModel) editProject(in core.ProjectInput) tea.Cmd {
 	}
 }
 
+// setLifecycle moves the viewed Project to state.
 func (v *projectViewModel) setLifecycle(state core.Lifecycle) tea.Cmd {
 	return func() tea.Msg {
 		_, err := v.core.SetProjectLifecycle(context.Background(), v.projectID, state)
@@ -98,6 +90,7 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// handleKey routes a key to the open overlay, or to the screen's own actions.
 func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if v.form != nil {
 		done, submitted := v.form.update(msg)
@@ -146,6 +139,8 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+// ready reports whether the Project has loaded without error, so the edit and
+// lifecycle actions have something to act on.
 func (v *projectViewModel) ready() bool {
 	return v.loaded && v.loadErr == nil
 }
@@ -177,32 +172,18 @@ func (v *projectViewModel) View() string {
 	return b.String()
 }
 
+// categoryName is the display name for a Category id, or a neutral placeholder
+// when the id is not in the loaded list.
 func (v *projectViewModel) categoryName(id int64) string {
 	for _, c := range v.cats {
 		if c.ID == id {
 			return c.Name
 		}
 	}
-	return "#" + strconv.FormatInt(id, 10)
+	return "(unknown Category)"
 }
 
-func lifecycleLabels() []string {
-	labels := make([]string, len(lifecycleOrder))
-	for i, l := range lifecycleOrder {
-		labels[i] = string(l)
-	}
-	return labels
-}
-
-func lifecycleIndex(state core.Lifecycle) int {
-	for i, l := range lifecycleOrder {
-		if l == state {
-			return i
-		}
-	}
-	return 0
-}
-
+// orDash renders an em dash for an empty optional string.
 func orDash(s string) string {
 	if s == "" {
 		return "—"
