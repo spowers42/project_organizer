@@ -11,7 +11,7 @@ import (
 )
 
 // taskColumns is the SELECT list for reading a core.Task.
-const taskColumns = "id, project_id, title, due_date, done"
+const taskColumns = "id, project_id, title, due_date, notes, done"
 
 // scanTask reads one core.Task from a row-like source.
 func scanTask(sc interface{ Scan(...any) error }) (core.Task, error) {
@@ -19,7 +19,7 @@ func scanTask(sc interface{ Scan(...any) error }) (core.Task, error) {
 		t   core.Task
 		due sql.NullString
 	)
-	if err := sc.Scan(&t.ID, &t.ProjectID, &t.Title, &due, &t.Done); err != nil {
+	if err := sc.Scan(&t.ID, &t.ProjectID, &t.Title, &due, &t.Notes, &t.Done); err != nil {
 		return core.Task{}, err
 	}
 	if due.Valid {
@@ -42,7 +42,7 @@ func formatDue(due *time.Time) any {
 
 // CreateTask appends a loose Task to a Project's body: its position is one past
 // the current maximum among that Project's live Tasks.
-func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, dueDate *time.Time) (core.Task, error) {
+func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
 	var nextPos int64
 	err := s.db.QueryRowContext(ctx,
 		"SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE project_id = ? AND archived_at IS NULL",
@@ -53,8 +53,8 @@ func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, d
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO tasks (project_id, title, due_date, done, position) VALUES (?, ?, ?, 0, ?)",
-		projectID, title, formatDue(dueDate), nextPos,
+		"INSERT INTO tasks (project_id, title, due_date, notes, done, position) VALUES (?, ?, ?, ?, 0, ?)",
+		projectID, title, formatDue(dueDate), notes, nextPos,
 	)
 	if err != nil {
 		return core.Task{}, fmt.Errorf("creating task: %w", err)
@@ -66,11 +66,11 @@ func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, d
 	return s.GetTask(ctx, id)
 }
 
-// UpdateTask rewrites a live Task's title and due date.
-func (s *Store) UpdateTask(ctx context.Context, id int64, title string, dueDate *time.Time) (core.Task, error) {
+// UpdateTask rewrites a live Task's title, due date, and notes.
+func (s *Store) UpdateTask(ctx context.Context, id int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
 	return s.updateTask(ctx, id,
-		"UPDATE tasks SET title = ?, due_date = ? WHERE id = ? AND archived_at IS NULL",
-		title, formatDue(dueDate), id,
+		"UPDATE tasks SET title = ?, due_date = ?, notes = ? WHERE id = ? AND archived_at IS NULL",
+		title, formatDue(dueDate), notes, id,
 	)
 }
 

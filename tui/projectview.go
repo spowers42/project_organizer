@@ -308,6 +308,11 @@ func renderTaskRows(tasks []core.Task, selected int, loadErr error) string {
 			due = "  (due " + task.DueDate.Format(taskDueDateLayout) + ")"
 		}
 		fmt.Fprintf(&b, "%s%s %s%s\n", marker, box, task.Title, due)
+		if strings.TrimSpace(task.Notes) != "" {
+			for _, line := range strings.Split(task.Notes, "\n") {
+				fmt.Fprintf(&b, "      %s\n", line)
+			}
+		}
 	}
 	return b.String()
 }

@@ -15,6 +15,10 @@ import (
 // due date. A blank field means no due date.
 const taskDueDateLayout = "2006-01-02"
 
+// taskFormIndent aligns a continuation line under the value column of the
+// "> Label:    " rows the form draws.
+const taskFormIndent = "           "
+
 // errTaskDueDateFormat is returned by taskForm.input when the due-date field
 // holds text that is not a taskDueDateLayout date. The owning screen maps it to
 // a message through errorMessage, like the core.Err* sentinels.
@@ -26,16 +30,19 @@ type taskFormField int
 const (
 	taskFieldTitle taskFormField = iota
 	taskFieldDueDate
+	taskFieldNotes
 	taskFieldCount
 )
 
-// taskForm is the shared add / edit overlay for a loose Task: a title and an
-// optional due date (YYYY-MM-DD). It holds no Core and performs no persistence —
-// the screen that owns it reads input() and calls core.
+// taskForm is the shared add / edit overlay for a loose Task: a title, an
+// optional due date (YYYY-MM-DD), and optional freeform notes (multi-line). It
+// holds no Core and performs no persistence — the screen that owns it reads
+// input() and calls core.
 type taskForm struct {
 	heading    string
 	titleInput textInput
 	due        textInput
+	notes      textArea
 	focus      taskFormField
 }
 
@@ -46,10 +53,12 @@ func newTaskForm(heading string, initial *core.Task) taskForm {
 		heading:    heading,
 		titleInput: newTextInput(""),
 		due:        newTextInput(""),
+		notes:      newTextArea(""),
 		focus:      taskFieldTitle,
 	}
 	if initial != nil {
 		f.titleInput = newTextInput(initial.Title)
+		f.notes = newTextArea(initial.Notes)
 		if initial.DueDate != nil {
 			f.due = newTextInput(initial.DueDate.Format(taskDueDateLayout))
 		}
@@ -65,6 +74,11 @@ func (f *taskForm) update(msg tea.KeyMsg) (done, submitted bool) {
 		return true, false
 	case "enter":
 		return true, true
+	case "alt+enter":
+		if f.focus == taskFieldNotes {
+			f.notes.newline()
+		}
+		return false, false
 	case "tab", "down":
 		f.focus = (f.focus + 1) % taskFieldCount
 		return false, false
@@ -72,37 +86,44 @@ func (f *taskForm) update(msg tea.KeyMsg) (done, submitted bool) {
 		f.focus = (f.focus - 1 + taskFieldCount) % taskFieldCount
 		return false, false
 	case "backspace":
-		f.editFocused(func(t *textInput) { t.backspace() })
+		if e := f.focused(); e != nil {
+			e.backspace()
+		}
 		return false, false
 	default:
 		// Printable input: KeyRunes for ordinary characters, KeySpace for the
 		// space bar (Bubble Tea reports it as its own type but still fills
-		// Runes). Titles allow spaces.
-		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+		// Runes). Every field allows spaces.
+		if e := f.focused(); e != nil && (msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace) {
 			for _, r := range msg.Runes {
-				f.editFocused(func(t *textInput) { t.insertRune(r) })
+				e.insertRune(r)
 			}
 		}
 		return false, false
 	}
 }
 
-// editFocused applies edit to whichever text field currently holds focus.
-func (f *taskForm) editFocused(edit func(*textInput)) {
+// focused is the text field the focus is currently on.
+func (f *taskForm) focused() textEntry {
 	switch f.focus {
 	case taskFieldTitle:
-		edit(&f.titleInput)
+		return &f.titleInput
 	case taskFieldDueDate:
-		edit(&f.due)
+		return &f.due
+	case taskFieldNotes:
+		return &f.notes
+	default:
+		return nil
 	}
 }
 
 // input is the value the form currently describes, ready for core.AddTask /
 // core.EditTask. A blank due-date field yields a nil DueDate; a malformed one
 // is errTaskDueDateFormat so the owning screen can surface it and keep the form
-// open. A whitespace-only title is left for core to reject.
+// open. A whitespace-only title is left for core to reject. Notes pass through
+// verbatim, empty when untouched.
 func (f taskForm) input() (core.TaskInput, error) {
-	in := core.TaskInput{Title: f.titleInput.String()}
+	in := core.TaskInput{Title: f.titleInput.String(), Notes: f.notes.String()}
 	raw := strings.TrimSpace(f.due.String())
 	if raw == "" {
 		return in, nil
@@ -122,7 +143,15 @@ func (f taskForm) render() string {
 	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "%s Title:    %s\n", rowMarker(f.focus == taskFieldTitle), f.titleInput.render(f.focus == taskFieldTitle))
 	fmt.Fprintf(&b, "%s Due date: %s\n", rowMarker(f.focus == taskFieldDueDate), f.due.render(f.focus == taskFieldDueDate))
-	b.WriteString("            (YYYY-MM-DD, or blank for none)\n")
+	b.WriteString(taskFormIndent + "(YYYY-MM-DD, or blank for none)\n")
+
+	noteLines := f.notes.lines(f.focus == taskFieldNotes)
+	fmt.Fprintf(&b, "%s Notes:    %s\n", rowMarker(f.focus == taskFieldNotes), noteLines[0])
+	for _, line := range noteLines[1:] {
+		b.WriteString(taskFormIndent + line + "\n")
+	}
+	b.WriteString(taskFormIndent + "(alt+enter for a new line)\n")
+
 	b.WriteString("\ntab: next field   enter: save   esc: cancel\n")
 	return b.String()
 }

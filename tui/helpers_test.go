@@ -17,6 +17,8 @@ func key(s string) tea.KeyMsg {
 	switch s {
 	case "enter":
 		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "alt+enter":
+		return tea.KeyMsg{Type: tea.KeyEnter, Alt: true}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "tab":

@@ -133,6 +133,70 @@ func TestProjectViewEditTaskTitleAndDueDate(t *testing.T) {
 	}
 }
 
+// Adding a Task with multi-line notes (alt+enter for the line break) persists
+// them and shows them under the row in the Project view.
+func TestProjectViewAddTaskWithNotes(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCore(t)
+	p := mustProject(t, c, "P")
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+
+	v.Update(key("a"))
+	for _, m := range typeString("call the API team") {
+		v.Update(m)
+	}
+	v.Update(key("tab")) // to due date
+	v.Update(key("tab")) // to notes
+	for _, m := range typeString("blocked on their staging env") {
+		v.Update(m)
+	}
+	v.Update(key("alt+enter"))
+	for _, m := range typeString("ping again Monday") {
+		v.Update(m)
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	tasks, err := c.ProjectTasks(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("ProjectTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Notes != "blocked on their staging env\nping again Monday" {
+		t.Fatalf("task notes = %q, want the two typed lines", tasks[0].Notes)
+	}
+	view := v.View()
+	if !strings.Contains(view, "blocked on their staging env") || !strings.Contains(view, "ping again Monday") {
+		t.Errorf("view = %q, want both note lines shown under the Task", view)
+	}
+}
+
+// Editing a Task can replace and clear its notes.
+func TestProjectViewEditTaskNotes(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCore(t)
+	p := mustProject(t, c, "P")
+	task, err := c.AddTask(ctx, p.ID, core.TaskInput{Title: "t", Notes: "old note"})
+	if err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+
+	v.Update(key("t"))
+	v.Update(key("tab")) // to due date
+	v.Update(key("tab")) // to notes
+	for i := 0; i < len("old note"); i++ {
+		v.Update(key("backspace"))
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	if got := findTask(t, c, p.ID, task.ID); got.Notes != "" {
+		t.Errorf("Notes = %q, want empty after clearing", got.Notes)
+	}
+}
+
 // Editing a Task with a blank due-date field clears an existing due date.
 func TestProjectViewEditTaskClearsDueDate(t *testing.T) {
 	ctx := context.Background()

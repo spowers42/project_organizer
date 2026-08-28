@@ -45,10 +45,11 @@ type Store interface {
 
 	// CreateTask appends a loose Task to a Project's body (position after the
 	// existing entries) and returns it as stored.
-	CreateTask(ctx context.Context, projectID int64, title string, dueDate *time.Time) (Task, error)
-	// UpdateTask rewrites a live Task's title and due date; a nil dueDate
-	// clears it. Reports ErrTaskNotFound when no live row matches.
-	UpdateTask(ctx context.Context, id int64, title string, dueDate *time.Time) (Task, error)
+	CreateTask(ctx context.Context, projectID int64, title string, dueDate *time.Time, notes string) (Task, error)
+	// UpdateTask rewrites a live Task's title, due date, and notes; a nil
+	// dueDate clears the due date and an empty notes clears the notes. Reports
+	// ErrTaskNotFound when no live row matches.
+	UpdateTask(ctx context.Context, id int64, title string, dueDate *time.Time, notes string) (Task, error)
 	// SetTaskDone sets a live Task's completion flag. Reports ErrTaskNotFound
 	// when no live row matches.
 	SetTaskDone(ctx context.Context, id int64, done bool) (Task, error)

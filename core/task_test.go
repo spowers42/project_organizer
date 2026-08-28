@@ -143,6 +143,53 @@ func TestEditTaskChangesTitleAndDueDate(t *testing.T) {
 	}
 }
 
+func TestTaskNotesAreOptionalAddEditAndClear(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "P", categoryID(t, c, "Other"))
+
+	// Added without notes: an empty string, not a surprise.
+	bare := mustAddTask(t, c, p.ID, "bare")
+	if bare.Notes != "" {
+		t.Errorf("Notes = %q, want empty for a Task added without notes", bare.Notes)
+	}
+
+	// Added with multi-line freeform notes: stored verbatim.
+	notes := "first line\nsecond line\n\nafter a blank line"
+	noted, err := c.AddTask(ctx, p.ID, core.TaskInput{Title: "noted", Notes: notes})
+	if err != nil {
+		t.Fatalf("AddTask(noted): %v", err)
+	}
+	if noted.Notes != notes {
+		t.Errorf("Notes = %q, want %q", noted.Notes, notes)
+	}
+
+	// Edited to new notes, then cleared with an empty string.
+	edited, err := c.EditTask(ctx, noted.ID, core.TaskInput{Title: "noted", Notes: "replaced"})
+	if err != nil {
+		t.Fatalf("EditTask(replace notes): %v", err)
+	}
+	if edited.Notes != "replaced" {
+		t.Errorf("Notes = %q, want %q", edited.Notes, "replaced")
+	}
+	cleared, err := c.EditTask(ctx, noted.ID, core.TaskInput{Title: "noted"})
+	if err != nil {
+		t.Fatalf("EditTask(clear notes): %v", err)
+	}
+	if cleared.Notes != "" {
+		t.Errorf("Notes = %q, want empty after clearing", cleared.Notes)
+	}
+
+	// Notes survive a round-trip through the body listing.
+	tasks, err := c.ProjectTasks(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("ProjectTasks: %v", err)
+	}
+	if tasks[0].Notes != "" || tasks[1].Notes != "" {
+		t.Errorf("persisted notes = %q / %q, want both empty", tasks[0].Notes, tasks[1].Notes)
+	}
+}
+
 func TestEditTaskValidatesTitleAndID(t *testing.T) {
 	c, _ := newTestCore(t)
 	ctx := context.Background()

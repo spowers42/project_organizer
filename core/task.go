@@ -16,15 +16,19 @@ type Task struct {
 	ProjectID int64
 	Title     string
 	DueDate   *time.Time
+	Notes     string
 	Done      bool
 }
 
 // TaskInput carries the user-supplied fields for adding or editing a Task. The
 // title is trimmed and must be non-empty; DueDate is optional and a nil value
-// clears any existing due date on an edit.
+// clears any existing due date on an edit. Notes is optional freeform text
+// (possibly multi-line); an empty string means no notes and clears any existing
+// notes on an edit.
 type TaskInput struct {
 	Title   string
 	DueDate *time.Time
+	Notes   string
 }
 
 // Errors returned by the Task operations. Callers match them with errors.Is;
@@ -45,7 +49,7 @@ func (c *Core) AddTask(ctx context.Context, projectID int64, in TaskInput) (Task
 	if err != nil {
 		return Task{}, err
 	}
-	return c.store.CreateTask(ctx, projectID, title, in.DueDate)
+	return c.store.CreateTask(ctx, projectID, title, in.DueDate, in.Notes)
 }
 
 // EditTask rewrites a Task's title and due date. Same title validation as
@@ -59,7 +63,7 @@ func (c *Core) EditTask(ctx context.Context, id int64, in TaskInput) (Task, erro
 	if err != nil {
 		return Task{}, err
 	}
-	return c.store.UpdateTask(ctx, id, title, in.DueDate)
+	return c.store.UpdateTask(ctx, id, title, in.DueDate, in.Notes)
 }
 
 // SetTaskDone marks a Task done or not done. Completion order is unconstrained:
