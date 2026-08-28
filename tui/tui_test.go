@@ -276,3 +276,78 @@ func TestProjectViewEditAndLifecycle(t *testing.T) {
 		t.Errorf("Project lifecycle = %q, want Done", got.Lifecycle)
 	}
 }
+
+// Declining the archive confirmation leaves the Project untouched.
+func TestProjectViewArchiveDeclined(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCore(t)
+	p, err := c.CreateProject(ctx, core.ProjectInput{Name: "keep me", CategoryID: firstCategoryID(t, c)})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+
+	v.Update(key("d"))
+	if v.confirmUI == nil {
+		t.Fatal("pressing d did not open the archive confirmation")
+	}
+	if cmd := v.Update(key("n")); cmd != nil {
+		t.Errorf("declining produced a command %v, want none", cmd())
+	}
+	if v.confirmUI != nil {
+		t.Error("confirmation still open after declining")
+	}
+	if _, err := c.GetProject(ctx, p.ID); err != nil {
+		t.Errorf("GetProject after decline = %v, want the Project still live", err)
+	}
+}
+
+// Confirming the archive removes the Project and returns to the dashboard.
+func TestRootModelArchiveProjectFromProjectView(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCore(t)
+	catID := firstCategoryID(t, c)
+	p, err := c.CreateProject(ctx, core.ProjectInput{Name: "doomed", CategoryID: catID})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	m := newModel(c)
+	drainInit(func(msg tea.Msg) tea.Cmd { _, cmd := m.Update(msg); return cmd }, m.Init())
+
+	_, cmd := m.Update(key("enter")) // open the Project
+	m.Update(cmd())
+	drainInit(func(msg tea.Msg) tea.Cmd { _, cmd := m.Update(msg); return cmd }, m.proj.Init())
+	if m.screen != screenProject {
+		t.Fatalf("screen = %d, want screenProject", m.screen)
+	}
+
+	m.Update(key("d")) // open the confirm
+	if m.proj.confirmUI == nil {
+		t.Fatal("d did not open the archive confirmation")
+	}
+	_, cmd = m.Update(key("y")) // confirm -> archiveProject cmd
+	if cmd == nil {
+		t.Fatal("confirming produced no command")
+	}
+	_, cmd = m.Update(cmd()) // projectArchivedMsg -> backToDashboardMsg cmd
+	if cmd == nil {
+		t.Fatal("archive result produced no navigation command")
+	}
+	_, cmd = m.Update(cmd()) // backToDashboardMsg -> dashboard reload cmd
+	if cmd != nil {
+		m.Update(cmd()) // projectsLoadedMsg
+	}
+
+	if m.screen != screenDashboard {
+		t.Errorf("screen = %d, want screenDashboard after archive", m.screen)
+	}
+	if _, err := c.GetProject(ctx, p.ID); err == nil {
+		t.Error("Project still live after confirmed archive")
+	}
+	if len(m.dash.projects) != 0 {
+		t.Errorf("dashboard projects = %+v, want the archived Project gone", m.dash.projects)
+	}
+}

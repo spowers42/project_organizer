@@ -23,6 +23,7 @@ type projectViewModel struct {
 	status    string
 	form      *projectForm
 	lifeUI    *picker
+	confirmUI *confirm
 }
 
 // newProjectView builds the screen bound to one Project id; Init loads it.
@@ -34,6 +35,11 @@ func newProjectView(c *core.Core, id int64) *projectViewModel {
 type projectLoadedMsg struct {
 	project core.Project
 	err     error
+}
+
+// projectArchivedMsg is the result of archiving the viewed Project.
+type projectArchivedMsg struct {
+	err error
 }
 
 // Init loads the Project and the shared Category list.
@@ -63,6 +69,13 @@ func (v *projectViewModel) setLifecycle(state core.Lifecycle) tea.Cmd {
 	}
 }
 
+// archiveProject soft-deletes the viewed Project into the Archive.
+func (v *projectViewModel) archiveProject() tea.Cmd {
+	return func() tea.Msg {
+		return projectArchivedMsg{err: v.core.ArchiveProject(context.Background(), v.projectID)}
+	}
+}
+
 // Update advances the Project view for one message.
 func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
@@ -84,6 +97,14 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 		v.lifeUI = nil
 		v.status = "Saved."
 		return v.loadProject
+	case projectArchivedMsg:
+		if msg.err != nil {
+			v.status = errorMessage(msg.err)
+			return nil
+		}
+		// The Project is gone from every view; return to the dashboard, which
+		// reloads without it.
+		return func() tea.Msg { return backToDashboardMsg{} }
 	case tea.KeyMsg:
 		return v.handleKey(msg)
 	}
@@ -116,6 +137,17 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if v.confirmUI != nil {
+		done, confirmed := v.confirmUI.update(msg)
+		if !done {
+			return nil
+		}
+		v.confirmUI = nil
+		if confirmed {
+			return v.archiveProject()
+		}
+		return nil
+	}
 
 	switch msg.String() {
 	case "esc", "b":
@@ -133,6 +165,14 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if v.ready() {
 			p := newPicker(lifecycleLabels(), lifecycleIndex(v.project.Lifecycle))
 			v.lifeUI = &p
+			v.status = ""
+		}
+	case "d":
+		if v.ready() {
+			cu := newConfirm(fmt.Sprintf(
+				"Archive %q? It moves to the Archive and leaves every view. Recover it with the archive CLI.",
+				v.project.Name))
+			v.confirmUI = &cu
 			v.status = ""
 		}
 	}
@@ -154,6 +194,9 @@ func (v *projectViewModel) View() string {
 		return "Set lifecycle state\n\n" + v.lifeUI.render() +
 			"\n↑/↓: choose   enter: set   esc: cancel\n" + statusBlock(v.status)
 	}
+	if v.confirmUI != nil {
+		return v.confirmUI.render() + "\n←/→: choose   y/n: answer   esc: cancel\n" + statusBlock(v.status)
+	}
 	if !v.loaded {
 		return "Loading Project…\n"
 	}
@@ -168,7 +211,7 @@ func (v *projectViewModel) View() string {
 	fmt.Fprintf(&b, "Category:    %s\n", v.categoryName(p.CategoryID))
 	fmt.Fprintf(&b, "Lifecycle:   %s\n", p.Lifecycle)
 	b.WriteString(statusBlock(v.status))
-	b.WriteString("\ne: edit   s: set lifecycle   esc: back   q: quit\n")
+	b.WriteString("\ne: edit   s: set lifecycle   d: archive   esc: back   q: quit\n")
 	return b.String()
 }
 
