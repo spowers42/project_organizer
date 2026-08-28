@@ -58,6 +58,10 @@ type Store interface {
 	GetTask(ctx context.Context, id int64) (Task, error)
 	// ListProjectTasks returns a Project's loose Tasks in body order.
 	ListProjectTasks(ctx context.Context, projectID int64) ([]Task, error)
+	// SwapTaskPositions exchanges the body positions of two live loose Tasks
+	// in one transaction, reporting ErrTaskNotFound when either id matches no
+	// live row.
+	SwapTaskPositions(ctx context.Context, firstID, secondID int64) error
 }
 
 // Core holds the injected dependencies and exposes the application operations.

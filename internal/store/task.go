@@ -113,6 +113,58 @@ func (s *Store) GetTask(ctx context.Context, id int64) (core.Task, error) {
 	return t, nil
 }
 
+// SwapTaskPositions exchanges the body positions of two live loose Tasks in a
+// single transaction, so a reorder never leaves the body with a duplicated or
+// skipped position. Either id matching no live row is core.ErrTaskNotFound and
+// rolls the swap back.
+func (s *Store) SwapTaskPositions(ctx context.Context, firstID, secondID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("swapping task positions: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	firstPos, err := livePosition(ctx, tx, firstID)
+	if err != nil {
+		return err
+	}
+	secondPos, err := livePosition(ctx, tx, secondID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET position = ? WHERE id = ?", secondPos, firstID,
+	); err != nil {
+		return fmt.Errorf("moving task %d: %w", firstID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET position = ? WHERE id = ?", firstPos, secondID,
+	); err != nil {
+		return fmt.Errorf("moving task %d: %w", secondID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("swapping task positions: %w", err)
+	}
+	return nil
+}
+
+// livePosition reads one live Task's body position within a transaction,
+// mapping a missing row to core.ErrTaskNotFound.
+func livePosition(ctx context.Context, tx *sql.Tx, id int64) (int64, error) {
+	var pos int64
+	err := tx.QueryRowContext(ctx,
+		"SELECT position FROM tasks WHERE id = ? AND archived_at IS NULL", id,
+	).Scan(&pos)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, core.ErrTaskNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reading task %d position: %w", id, err)
+	}
+	return pos, nil
+}
+
 // ListProjectTasks returns a Project's live loose Tasks in body order (by
 // ascending position, then id to break ties deterministically).
 func (s *Store) ListProjectTasks(ctx context.Context, projectID int64) ([]core.Task, error) {
