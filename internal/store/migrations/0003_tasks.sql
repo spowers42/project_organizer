@@ -5,9 +5,10 @@
 -- `position` orders a Task within its Project body (per ADR 0001 the body is one
 -- ordered heterogeneous sequence; for now it holds loose Tasks only). It is
 -- assigned on insert as the current max + 1; reordering lands in a later ticket.
--- `due_date` is an optional RFC3339 timestamp. `done` is the completion flag,
--- unconstrained in order relative to other Tasks. `archived_at` follows the
--- soft-delete convention from 0001 even though archiving a single Task lands
+-- `due_date` is an optional RFC3339 timestamp. `notes` is optional freeform
+-- plain text (possibly multi-line), empty when unset. `done` is the completion
+-- flag, unconstrained in order relative to other Tasks. `archived_at` follows
+-- the soft-delete convention from 0001 even though archiving a single Task lands
 -- later; every normal query already filters `archived_at IS NULL`.
 
 CREATE TABLE tasks (
@@ -15,6 +16,7 @@ CREATE TABLE tasks (
     project_id  INTEGER NOT NULL REFERENCES projects(id),
     title       TEXT NOT NULL,
     due_date    TEXT,
+    notes       TEXT NOT NULL DEFAULT '',
     done        INTEGER NOT NULL DEFAULT 0,
     position    INTEGER NOT NULL,
     archived_at TEXT
