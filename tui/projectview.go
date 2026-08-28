@@ -56,6 +56,15 @@ type taskSavedMsg struct {
 	err error
 }
 
+// taskMovedMsg is the result of reordering a loose Task within the Project
+// body. On success it carries the Tasks in their new body order and the id of
+// the moved Task so the selection can follow it.
+type taskMovedMsg struct {
+	tasks   []core.Task
+	movedID int64
+	err     error
+}
+
 // Init loads the Project, its Tasks, and the shared Category list.
 func (v *projectViewModel) Init() tea.Cmd {
 	return tea.Batch(v.loadProject, v.loadTasks, loadCategoriesCmd(v.core))
@@ -94,6 +103,15 @@ func (v *projectViewModel) toggleTask(task core.Task) tea.Cmd {
 	return func() tea.Msg {
 		_, err := v.core.SetTaskDone(context.Background(), task.ID, !task.Done)
 		return taskSavedMsg{err: err}
+	}
+}
+
+// moveTask reorders the given loose Task one slot up or down in the Project
+// body and reports the new order.
+func (v *projectViewModel) moveTask(id int64, dir core.TaskMove) tea.Cmd {
+	return func() tea.Msg {
+		tasks, err := v.core.MoveTask(context.Background(), id, dir)
+		return taskMovedMsg{tasks: tasks, movedID: id, err: err}
 	}
 }
 
@@ -140,6 +158,19 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 		v.overlay.close()
 		v.status = "Saved."
 		return v.loadTasks
+	case taskMovedMsg:
+		if msg.err != nil {
+			v.status = errorMessage(msg.err)
+			return nil
+		}
+		v.tasks, v.tasksErr = msg.tasks, nil
+		for i, task := range v.tasks {
+			if task.ID == msg.movedID {
+				v.taskSel = i
+				break
+			}
+		}
+		return nil
 	case categoriesLoadedMsg:
 		v.cats = msg.cats
 		if msg.err != nil {
@@ -186,6 +217,14 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "down", "j":
 		if v.taskSel < len(v.tasks)-1 {
 			v.taskSel++
+		}
+	case "shift+up", "K":
+		if v.ready() && v.hasTaskSelection() {
+			return v.moveTask(v.tasks[v.taskSel].ID, core.MoveUp)
+		}
+	case "shift+down", "J":
+		if v.ready() && v.hasTaskSelection() {
+			return v.moveTask(v.tasks[v.taskSel].ID, core.MoveDown)
 		}
 	case "a":
 		if v.ready() {
@@ -278,7 +317,7 @@ func (v *projectViewModel) View() string {
 	b.WriteString("\nTasks:\n")
 	b.WriteString(renderTaskRows(v.tasks, v.taskSel, v.tasksErr))
 	b.WriteString(statusBlock(v.status))
-	b.WriteString("\n↑/↓: select Task   space: toggle done   a: add Task   t: edit Task\n")
+	b.WriteString("\n↑/↓: select Task   shift+↑/↓: reorder   space: toggle done   a: add Task   t: edit Task\n")
 	b.WriteString("e: edit Project   s: set lifecycle   d: archive   esc: back   q: quit\n")
 	return b.String()
 }
