@@ -33,7 +33,7 @@ func (c *confirm) update(msg tea.KeyMsg) (done, confirmed bool) {
 	}
 }
 
-// render draws the prompt with the current highlight.
+// render draws the prompt with the current highlight and the key-hint line.
 func (c confirm) render() string {
 	yes, no := "  Yes  ", "  No  "
 	if c.choice {
@@ -41,5 +41,6 @@ func (c confirm) render() string {
 	} else {
 		no = "> No <"
 	}
-	return c.prompt + "\n\n" + yes + "   " + no + "\n"
+	return c.prompt + "\n\n" + yes + "   " + no + "\n" +
+		"\n←/→: choose   y/n: answer   esc: cancel\n"
 }

@@ -28,8 +28,7 @@ type dashboardModel struct {
 	filter   core.ProjectFilter
 	loadErr  error
 	status   string
-	form     *projectForm
-	filterUI *filterForm
+	overlay  overlayHost
 }
 
 // newDashboard builds the screen with the default (Active-only) filter; Init
@@ -110,9 +109,9 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 	case projectSavedMsg:
 		if msg.err != nil {
 			d.status = errorMessage(msg.err)
-			return nil // keep the form open so the user can fix and retry
+			return nil // keep the overlay open so the user can fix and retry
 		}
-		d.form = nil
+		d.overlay.close()
 		d.status = "Project created."
 		return d.reload()
 	case tea.KeyMsg:
@@ -124,30 +123,8 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 // handleKey routes a key to the open overlay, or to the dashboard's own
 // navigation and actions.
 func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
-	switch {
-	case d.form != nil:
-		done, submitted := d.form.update(msg)
-		if !done {
-			return nil
-		}
-		if !submitted {
-			d.form = nil
-			return nil
-		}
-		return d.createProject(d.form.input())
-	case d.filterUI != nil:
-		done, applied := d.filterUI.update(msg)
-		if !done {
-			return nil
-		}
-		if applied {
-			d.filter = d.filterUI.filter()
-			d.sel = 0
-			d.filterUI = nil
-			return d.reload()
-		}
-		d.filterUI = nil
-		return nil
+	if cmd, handled := d.overlay.handleKey(msg); handled {
+		return cmd
 	}
 
 	switch msg.String() {
@@ -168,11 +145,16 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	case "n":
 		f := newProjectForm("New Project", d.cats, nil)
-		d.form = &f
+		d.overlay.open(&f, func() tea.Cmd { return d.createProject(f.input()) })
 		d.status = ""
 	case "f":
 		ff := newFilterForm(d.cats, d.filter)
-		d.filterUI = &ff
+		d.overlay.open(&ff, func() tea.Cmd {
+			d.filter = ff.filter()
+			d.sel = 0
+			d.overlay.close()
+			return d.reload()
+		})
 	case "c":
 		if d.filter != defaultDashboardFilter {
 			d.filter = defaultDashboardFilter
@@ -186,11 +168,8 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 // View renders the dashboard, its overlays, and the key hints.
 func (d *dashboardModel) View() string {
-	if d.form != nil {
-		return d.form.render() + statusBlock(d.status)
-	}
-	if d.filterUI != nil {
-		return d.filterUI.render() + statusBlock(d.status)
+	if d.overlay.active() {
+		return d.overlay.render() + statusBlock(d.status)
 	}
 
 	filtered := d.filter != defaultDashboardFilter

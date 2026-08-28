@@ -1,7 +1,9 @@
 // Package tui holds the Bubble Tea models for the two screens (a dashboard and
 // a Project view) plus the shared overlay widgets they use for text entry,
-// single-select pickers, and yes/no confirmation. It depends on core only and
-// holds no domain logic: the models parse input and call core.
+// single-select pickers, and yes/no confirmation. Each screen hosts at most one
+// overlay at a time through an overlayHost, which owns the modal's key routing,
+// rendering, and lifecycle. It depends on core only and holds no domain logic:
+// the models parse input and call core.
 package tui
 
 import (

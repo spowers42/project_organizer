@@ -100,7 +100,7 @@ func TestDashboardCreateProjectFlow(t *testing.T) {
 	drainInit(d.Update, d.Init())
 
 	d.Update(key("n")) // open the New Project form
-	if d.form == nil {
+	if !d.overlay.active() {
 		t.Fatal("pressing n did not open the create form")
 	}
 	for _, m := range typeString("Learn Go") {
@@ -112,7 +112,7 @@ func TestDashboardCreateProjectFlow(t *testing.T) {
 	}
 	d.Update(cmd()) // apply projectSavedMsg
 
-	if d.form != nil {
+	if d.overlay.active() {
 		t.Error("form still open after a successful create")
 	}
 	got, err := c.ListProjects(ctx, core.ProjectFilter{})
@@ -137,7 +137,7 @@ func TestDashboardCreateProjectValidationKeepsFormOpen(t *testing.T) {
 	cmd := d.Update(key("enter")) // empty name
 	d.Update(cmd())
 
-	if d.form == nil {
+	if !d.overlay.active() {
 		t.Error("form closed on a validation error, want it kept open")
 	}
 	if !strings.Contains(d.View(), "name must not be empty") {
@@ -262,12 +262,12 @@ func TestProjectViewEditAndLifecycle(t *testing.T) {
 		t.Errorf("Project name = %q, want %q", got.Name, "new name")
 	}
 
-	// Lifecycle: open the picker, move to Done, set.
+	// Lifecycle: open the picker, step from the current state to Done, set.
 	v.Update(key("s"))
-	if v.lifeUI == nil {
+	if !v.overlay.active() {
 		t.Fatal("pressing s did not open the lifecycle picker")
 	}
-	for v.lifeUI.value() != string(core.Done) {
+	for i := 0; i < lifecycleIndex(core.Done)-lifecycleIndex(v.project.Lifecycle); i++ {
 		v.Update(key("down"))
 	}
 	cmd = v.Update(key("enter"))
@@ -290,13 +290,13 @@ func TestProjectViewArchiveDeclined(t *testing.T) {
 	drainInit(v.Update, v.Init())
 
 	v.Update(key("d"))
-	if v.confirmUI == nil {
+	if !v.overlay.active() {
 		t.Fatal("pressing d did not open the archive confirmation")
 	}
 	if cmd := v.Update(key("n")); cmd != nil {
 		t.Errorf("declining produced a command %v, want none", cmd())
 	}
-	if v.confirmUI != nil {
+	if v.overlay.active() {
 		t.Error("confirmation still open after declining")
 	}
 	if _, err := c.GetProject(ctx, p.ID); err != nil {
@@ -325,7 +325,7 @@ func TestRootModelArchiveProjectFromProjectView(t *testing.T) {
 	}
 
 	m.Update(key("d")) // open the confirm
-	if m.proj.confirmUI == nil {
+	if !m.proj.overlay.active() {
 		t.Fatal("d did not open the archive confirmation")
 	}
 	_, cmd = m.Update(key("y")) // confirm -> archiveProject cmd
