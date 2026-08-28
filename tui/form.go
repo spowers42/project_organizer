@@ -95,7 +95,10 @@ func (f *projectForm) update(msg tea.KeyMsg) (done, submitted bool) {
 		f.editFocused(func(t *textInput) { t.backspace() })
 		return false, false
 	default:
-		if msg.Type == tea.KeyRunes {
+		// Printable input: KeyRunes for ordinary characters, KeySpace for the
+		// space bar (Bubble Tea reports it as its own type but still fills
+		// Runes). Descriptions and names both allow spaces.
+		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
 			for _, r := range msg.Runes {
 				f.editFocused(func(t *textInput) { t.insertRune(r) })
 			}

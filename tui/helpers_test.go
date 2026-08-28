@@ -38,12 +38,17 @@ func key(s string) tea.KeyMsg {
 	}
 }
 
-// typeString is the sequence of rune KeyMsgs for typing s character by
-// character.
+// typeString is the sequence of KeyMsgs for typing s character by character.
+// It mirrors Bubble Tea, which reports the space bar as KeySpace (with Runes
+// still set) rather than KeyRunes.
 func typeString(s string) []tea.KeyMsg {
 	msgs := make([]tea.KeyMsg, 0, len(s))
 	for _, r := range s {
-		msgs = append(msgs, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+		if r == ' ' {
+			m.Type = tea.KeySpace
+		}
+		msgs = append(msgs, m)
 	}
 	return msgs
 }

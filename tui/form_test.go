@@ -58,6 +58,26 @@ func TestProjectFormTypingLandsInTheFocusedField(t *testing.T) {
 	}
 }
 
+func TestProjectFormAcceptsSpacesInNameAndDescription(t *testing.T) {
+	f := newProjectForm("New Project", testCategories(), nil)
+
+	for _, m := range typeString("Learn Go slowly") {
+		f.update(m)
+	}
+	f.update(key("tab")) // -> description
+	for _, m := range typeString("read the spec first") {
+		f.update(m)
+	}
+
+	in := f.input()
+	if in.Name != "Learn Go slowly" {
+		t.Errorf("Name = %q, want spaces preserved", in.Name)
+	}
+	if in.Description != "read the spec first" {
+		t.Errorf("Description = %q, want spaces preserved", in.Description)
+	}
+}
+
 func TestProjectFormFocusCyclesAndWraps(t *testing.T) {
 	f := newProjectForm("New Project", testCategories(), nil)
 	if f.focus != fieldName {
