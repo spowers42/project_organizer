@@ -11,7 +11,7 @@ import (
 )
 
 func TestRenderProjectRowsEmptyState(t *testing.T) {
-	got := renderProjectRows(nil, 0)
+	got := renderProjectRows(nil, 0, nil)
 	if !strings.Contains(got, "No Projects match") {
 		t.Errorf("rows = %q, want an empty-state message", got)
 	}
@@ -19,15 +19,21 @@ func TestRenderProjectRowsEmptyState(t *testing.T) {
 
 func TestRenderProjectRowsMarksSelectionAndShowsLifecycle(t *testing.T) {
 	got := renderProjectRows([]core.Project{
-		{Name: "Write the parser", Lifecycle: core.Active},
-		{Name: "Refactor the store", Lifecycle: core.Paused},
-	}, 1)
+		{ID: 1, Name: "Write the parser", Lifecycle: core.Active},
+		{ID: 2, Name: "Refactor the store", Lifecycle: core.Paused},
+	}, 1, map[int64]core.Task{1: {Title: "sketch the grammar"}})
 
 	if !strings.Contains(got, "> Refactor the store") {
 		t.Errorf("rows = %q, want a caret on the selected row", got)
 	}
 	if !strings.Contains(got, "[Active]") || !strings.Contains(got, "[Paused]") {
 		t.Errorf("rows = %q, want each row to show its lifecycle state", got)
+	}
+	if !strings.Contains(got, "Next step: sketch the grammar") {
+		t.Errorf("rows = %q, want the Next step shown beneath its Project", got)
+	}
+	if strings.Contains(got, "Next step: \n") {
+		t.Errorf("rows = %q, want no Next-step line for a Project without one", got)
 	}
 }
 

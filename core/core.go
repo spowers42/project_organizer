@@ -42,6 +42,21 @@ type Store interface {
 	// ArchiveProject stamps archived_at on a live Project, reporting
 	// ErrProjectNotFound when no live row matches.
 	ArchiveProject(ctx context.Context, id int64, at time.Time) error
+
+	// CreateTask appends a loose Task to a Project's body (position after the
+	// existing entries) and returns it as stored.
+	CreateTask(ctx context.Context, projectID int64, title string, dueDate *time.Time) (Task, error)
+	// UpdateTask rewrites a live Task's title and due date; a nil dueDate
+	// clears it. Reports ErrTaskNotFound when no live row matches.
+	UpdateTask(ctx context.Context, id int64, title string, dueDate *time.Time) (Task, error)
+	// SetTaskDone sets a live Task's completion flag. Reports ErrTaskNotFound
+	// when no live row matches.
+	SetTaskDone(ctx context.Context, id int64, done bool) (Task, error)
+	// GetTask reads one live Task by id, reporting ErrTaskNotFound when it is
+	// missing or archived.
+	GetTask(ctx context.Context, id int64) (Task, error)
+	// ListProjectTasks returns a Project's loose Tasks in body order.
+	ListProjectTasks(ctx context.Context, projectID int64) ([]Task, error)
 }
 
 // Core holds the injected dependencies and exposes the application operations.

@@ -21,14 +21,15 @@ var defaultDashboardFilter = core.ProjectFilter{Lifecycle: core.Active}
 // current filter (Active by default — the spec's "in flight"), opens a Project
 // on enter, and hosts the create-Project and filter overlays. No Next step yet.
 type dashboardModel struct {
-	core     *core.Core
-	projects []core.Project
-	cats     []core.Category
-	sel      int
-	filter   core.ProjectFilter
-	loadErr  error
-	status   string
-	overlay  overlayHost
+	core      *core.Core
+	projects  []core.Project
+	nextSteps map[int64]core.Task // Project id -> its Next step, absent when none
+	cats      []core.Category
+	sel       int
+	filter    core.ProjectFilter
+	loadErr   error
+	status    string
+	overlay   overlayHost
 }
 
 // newDashboard builds the screen with the default (Active-only) filter; Init
@@ -46,10 +47,13 @@ func loadCategoriesCmd(c *core.Core) tea.Cmd {
 	}
 }
 
-// projectsLoadedMsg carries the result of a Project list load.
+// projectsLoadedMsg carries the result of a Project list load, together with
+// the Next step resolved for each listed Project (absent when the Project has
+// no incomplete Task).
 type projectsLoadedMsg struct {
-	projects []core.Project
-	err      error
+	projects  []core.Project
+	nextSteps map[int64]core.Task
+	err       error
 }
 
 // categoriesLoadedMsg carries the shared Category list, loaded once per screen
@@ -70,10 +74,25 @@ func (d *dashboardModel) Init() tea.Cmd {
 	return tea.Batch(d.loadProjects, loadCategoriesCmd(d.core))
 }
 
-// loadProjects queries core for the Projects matching the current filter.
+// loadProjects queries core for the Projects matching the current filter and
+// resolves each one's Next step so the list can show where it is waiting.
 func (d *dashboardModel) loadProjects() tea.Msg {
-	ps, err := d.core.ListProjects(context.Background(), d.filter)
-	return projectsLoadedMsg{projects: ps, err: err}
+	ctx := context.Background()
+	ps, err := d.core.ListProjects(ctx, d.filter)
+	if err != nil {
+		return projectsLoadedMsg{err: err}
+	}
+	next := make(map[int64]core.Task, len(ps))
+	for _, p := range ps {
+		step, ok, err := d.core.NextStep(ctx, p.ID)
+		if err != nil {
+			return projectsLoadedMsg{err: err}
+		}
+		if ok {
+			next[p.ID] = step
+		}
+	}
+	return projectsLoadedMsg{projects: ps, nextSteps: next}
 }
 
 // reload re-runs the Project query; the root model calls it on return from the
@@ -95,7 +114,7 @@ func (d *dashboardModel) createProject(in core.ProjectInput) tea.Cmd {
 func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case projectsLoadedMsg:
-		d.projects, d.loadErr = msg.projects, msg.err
+		d.projects, d.nextSteps, d.loadErr = msg.projects, msg.nextSteps, msg.err
 		if d.sel >= len(d.projects) {
 			d.sel = 0
 		}
@@ -184,7 +203,7 @@ func (d *dashboardModel) View() string {
 	if d.loadErr != nil {
 		b.WriteString("Could not load Projects: " + d.loadErr.Error() + "\n")
 	} else {
-		b.WriteString(renderProjectRows(d.projects, d.sel))
+		b.WriteString(renderProjectRows(d.projects, d.sel, d.nextSteps))
 	}
 	b.WriteString(statusBlock(d.status))
 	hints := "\n↑/↓: select   enter: open   n: new Project   f: filter   q: quit\n"
@@ -195,9 +214,11 @@ func (d *dashboardModel) View() string {
 	return b.String()
 }
 
-// renderProjectRows lists Projects with a caret against the selected row and
-// each Project's lifecycle state. An empty list shows a filter-aware message.
-func renderProjectRows(projects []core.Project, selected int) string {
+// renderProjectRows lists Projects with a caret against the selected row, each
+// Project's lifecycle state, and — indented beneath it — the Next step the
+// Project is waiting on. A Project with no incomplete Task shows no Next-step
+// line. An empty list shows a filter-aware message.
+func renderProjectRows(projects []core.Project, selected int, nextSteps map[int64]core.Task) string {
 	if len(projects) == 0 {
 		return "No Projects match the current filter.\n"
 	}
@@ -208,6 +229,9 @@ func renderProjectRows(projects []core.Project, selected int) string {
 			marker = "> "
 		}
 		fmt.Fprintf(&b, "%s%s  [%s]\n", marker, p.Name, p.Lifecycle)
+		if step, ok := nextSteps[p.ID]; ok {
+			fmt.Fprintf(&b, "      Next step: %s\n", step.Title)
+		}
 	}
 	return b.String()
 }
