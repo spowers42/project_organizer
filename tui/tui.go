@@ -1,96 +1,93 @@
 // Package tui holds the Bubble Tea models for the two screens (a dashboard and
-// a Project view). It depends on core only and holds no domain logic.
+// a Project view) plus the shared overlay widgets they use for text entry,
+// single-select pickers, and yes/no confirmation. It depends on core only and
+// holds no domain logic: the models parse input and call core.
 package tui
 
 import (
-	"context"
-	"fmt"
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spowers42/project_organizer/core"
 )
 
+// screenID names the visible screen. The spec fixes the TUI at exactly two.
+type screenID int
+
+const (
+	screenDashboard screenID = iota
+	screenProject
+)
+
+// openProjectMsg asks the root model to switch to the Project view for the
+// given Project id. The dashboard emits it when the user opens a row.
+type openProjectMsg int64
+
+// backToDashboardMsg asks the root model to return to the dashboard. The
+// Project view emits it on esc / b.
+type backToDashboardMsg struct{}
+
+// model is the root Bubble Tea model. It owns both screens and routes every
+// message to whichever one is visible, intercepting only the global quit key
+// and the two navigation messages.
+type model struct {
+	core   *core.Core
+	screen screenID
+	dash   *dashboardModel
+	proj   *projectViewModel
+}
+
 // Run launches the TUI on the given Core and blocks until the user quits.
 func Run(c *core.Core) error {
-	p := tea.NewProgram(newDashboard(c), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(c), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
 
-// dashboard is the entry screen: it lists every Active Project ("in flight"
-// work) and will offer Do Next. Next step resolution is a later ticket. It
-// holds the Core it queries for the Active Project list.
-type dashboard struct {
-	core     *core.Core
-	projects []core.Project
-	loadErr  error
+func newModel(c *core.Core) *model {
+	return &model{core: c, screen: screenDashboard, dash: newDashboard(c)}
 }
 
-func newDashboard(c *core.Core) dashboard {
-	return dashboard{core: c}
+// Init starts the dashboard's initial load.
+func (m *model) Init() tea.Cmd {
+	return m.dash.Init()
 }
 
-// projectsLoadedMsg carries the result of the initial Active Projects load.
-type projectsLoadedMsg struct {
-	projects []core.Project
-	err      error
-}
-
-// Init kicks off the Active Projects load.
-func (d dashboard) Init() tea.Cmd {
-	return d.loadProjects
-}
-
-func (d dashboard) loadProjects() tea.Msg {
-	projects, err := d.core.ActiveProjects(context.Background())
-	return projectsLoadedMsg{projects: projects, err: err}
-}
-
-// Update stores the loaded Projects and handles quit. There is no other
-// interaction yet.
-func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Update handles global quit and navigation, then delegates to the visible
+// screen.
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case projectsLoadedMsg:
-		d.projects = msg.projects
-		d.loadErr = msg.err
-		return d, nil
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c", "esc":
-			return d, tea.Quit
+		if msg.Type == tea.KeyCtrlC {
+			return m, tea.Quit
 		}
+	case openProjectMsg:
+		m.proj = newProjectView(m.core, int64(msg))
+		m.screen = screenProject
+		return m, m.proj.Init()
+	case backToDashboardMsg:
+		m.screen = screenDashboard
+		return m, m.dash.reload()
 	}
-	return d, nil
+
+	if m.screen == screenProject {
+		return m, m.proj.Update(msg)
+	}
+	return m, m.dash.Update(msg)
 }
 
-// View renders the dashboard. It must not panic with no Projects loaded.
-func (d dashboard) View() string {
-	if d.loadErr != nil {
-		return renderDashboardError(d.loadErr)
+// View renders the visible screen.
+func (m *model) View() string {
+	if m.screen == screenProject {
+		return m.proj.View()
 	}
-	return renderDashboard(d.projects)
+	return m.dash.View()
 }
 
-const dashboardTitle = "Project Organizer"
-
-func renderDashboard(projects []core.Project) string {
-	var b strings.Builder
-	b.WriteString(dashboardTitle)
-	b.WriteString("\n\n")
-	if len(projects) == 0 {
-		b.WriteString("No Active Projects yet.\n")
-	} else {
-		b.WriteString("Active Projects:\n")
-		for _, p := range projects {
-			fmt.Fprintf(&b, "  • %s\n", p.Name)
-		}
+// statusBlock formats the status / error line shared by both screens. An empty
+// status renders nothing.
+func statusBlock(status string) string {
+	if status == "" {
+		return ""
 	}
-	b.WriteString("\nPress q to quit.\n")
-	return b.String()
-}
-
-func renderDashboardError(err error) string {
-	return fmt.Sprintf("%s\n\nCould not load Projects: %v\n\nPress q to quit.\n", dashboardTitle, err)
+	return "\n" + status + "\n"
 }
