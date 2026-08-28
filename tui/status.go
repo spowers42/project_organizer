@@ -20,6 +20,12 @@ func errorMessage(err error) string {
 		return "That Project no longer exists."
 	case errors.Is(err, core.ErrInvalidLifecycle):
 		return "That is not a valid lifecycle state."
+	case errors.Is(err, core.ErrEmptyTaskTitle):
+		return "Task title must not be empty."
+	case errors.Is(err, core.ErrTaskNotFound):
+		return "That Task no longer exists."
+	case errors.Is(err, errTaskDueDateFormat):
+		return "Due date must be written as YYYY-MM-DD."
 	default:
 		return err.Error()
 	}

@@ -10,14 +10,18 @@ import (
 	"github.com/spowers42/project_organizer/core"
 )
 
-// projectViewModel is the second screen: one Project's fields, with actions to
-// edit them and to move the Project through its lifecycle. It reads core and
-// mutates through core; it holds no domain logic.
+// projectViewModel is the second screen: one Project's fields and its ordered
+// body of loose Tasks, with actions to edit the Project, move it through its
+// lifecycle, and add / edit / complete Tasks. It reads core and mutates through
+// core; it holds no domain logic.
 type projectViewModel struct {
 	core      *core.Core
 	projectID int64
 	project   core.Project
 	cats      []core.Category
+	tasks     []core.Task
+	taskSel   int
+	tasksErr  error
 	loaded    bool
 	loadErr   error
 	status    string
@@ -40,15 +44,57 @@ type projectArchivedMsg struct {
 	err error
 }
 
-// Init loads the Project and the shared Category list.
+// tasksLoadedMsg carries the result of loading the Project's loose Tasks.
+type tasksLoadedMsg struct {
+	tasks []core.Task
+	err   error
+}
+
+// taskSavedMsg is the result of an add / edit / complete-toggle on a Task. A
+// nil err means the change persisted.
+type taskSavedMsg struct {
+	err error
+}
+
+// Init loads the Project, its Tasks, and the shared Category list.
 func (v *projectViewModel) Init() tea.Cmd {
-	return tea.Batch(v.loadProject, loadCategoriesCmd(v.core))
+	return tea.Batch(v.loadProject, v.loadTasks, loadCategoriesCmd(v.core))
 }
 
 // loadProject reads the viewed Project by id.
 func (v *projectViewModel) loadProject() tea.Msg {
 	p, err := v.core.GetProject(context.Background(), v.projectID)
 	return projectLoadedMsg{project: p, err: err}
+}
+
+// loadTasks reads the Project's loose Tasks in body order.
+func (v *projectViewModel) loadTasks() tea.Msg {
+	ts, err := v.core.ProjectTasks(context.Background(), v.projectID)
+	return tasksLoadedMsg{tasks: ts, err: err}
+}
+
+// addTask appends a loose Task to the Project from the form's fields.
+func (v *projectViewModel) addTask(in core.TaskInput) tea.Cmd {
+	return func() tea.Msg {
+		_, err := v.core.AddTask(context.Background(), v.projectID, in)
+		return taskSavedMsg{err: err}
+	}
+}
+
+// editTask rewrites a Task's title and due date from the form's fields.
+func (v *projectViewModel) editTask(id int64, in core.TaskInput) tea.Cmd {
+	return func() tea.Msg {
+		_, err := v.core.EditTask(context.Background(), id, in)
+		return taskSavedMsg{err: err}
+	}
+}
+
+// toggleTask flips the selected Task's completion flag.
+func (v *projectViewModel) toggleTask(task core.Task) tea.Cmd {
+	return func() tea.Msg {
+		_, err := v.core.SetTaskDone(context.Background(), task.ID, !task.Done)
+		return taskSavedMsg{err: err}
+	}
 }
 
 // editProject persists the form's fields onto the viewed Project.
@@ -80,6 +126,20 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 	case projectLoadedMsg:
 		v.project, v.loadErr, v.loaded = msg.project, msg.err, true
 		return nil
+	case tasksLoadedMsg:
+		v.tasks, v.tasksErr = msg.tasks, msg.err
+		if v.taskSel >= len(v.tasks) {
+			v.taskSel = 0
+		}
+		return nil
+	case taskSavedMsg:
+		if msg.err != nil {
+			v.status = errorMessage(msg.err)
+			return nil // keep the overlay open to fix and retry
+		}
+		v.overlay.close()
+		v.status = "Saved."
+		return v.loadTasks
 	case categoriesLoadedMsg:
 		v.cats = msg.cats
 		if msg.err != nil {
@@ -119,6 +179,31 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return func() tea.Msg { return backToDashboardMsg{} }
 	case "q":
 		return tea.Quit
+	case "up", "k":
+		if v.taskSel > 0 {
+			v.taskSel--
+		}
+	case "down", "j":
+		if v.taskSel < len(v.tasks)-1 {
+			v.taskSel++
+		}
+	case "a":
+		if v.ready() {
+			f := newTaskForm("Add Task", nil)
+			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, 0) })
+			v.status = ""
+		}
+	case "t":
+		if v.ready() && v.hasTaskSelection() {
+			task := v.tasks[v.taskSel]
+			f := newTaskForm("Edit Task", &task)
+			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, task.ID) })
+			v.status = ""
+		}
+	case " ":
+		if v.ready() && v.hasTaskSelection() {
+			return v.toggleTask(v.tasks[v.taskSel])
+		}
 	case "e":
 		if v.ready() {
 			p := v.project
@@ -153,6 +238,25 @@ func (v *projectViewModel) ready() bool {
 	return v.loaded && v.loadErr == nil
 }
 
+// hasTaskSelection reports whether taskSel points at a loaded Task.
+func (v *projectViewModel) hasTaskSelection() bool {
+	return v.taskSel >= 0 && v.taskSel < len(v.tasks)
+}
+
+// submitTaskForm turns the form's fields into a core call: an add when editID is
+// zero, otherwise an edit of that Task. A malformed due date never reaches core;
+// it comes back as a taskSavedMsg error so the form stays open.
+func (v *projectViewModel) submitTaskForm(f *taskForm, editID int64) tea.Cmd {
+	in, err := f.input()
+	if err != nil {
+		return func() tea.Msg { return taskSavedMsg{err: err} }
+	}
+	if editID == 0 {
+		return v.addTask(in)
+	}
+	return v.editTask(editID, in)
+}
+
 // View renders the Project view or whichever overlay is open.
 func (v *projectViewModel) View() string {
 	if v.overlay.active() {
@@ -171,8 +275,45 @@ func (v *projectViewModel) View() string {
 	fmt.Fprintf(&b, "Description: %s\n", orDash(p.Description))
 	fmt.Fprintf(&b, "Category:    %s\n", v.categoryName(p.CategoryID))
 	fmt.Fprintf(&b, "Lifecycle:   %s\n", p.Lifecycle)
+	b.WriteString("\nTasks:\n")
+	b.WriteString(renderTaskRows(v.tasks, v.taskSel, v.tasksErr))
 	b.WriteString(statusBlock(v.status))
-	b.WriteString("\ne: edit   s: set lifecycle   d: archive   esc: back   q: quit\n")
+	b.WriteString("\n↑/↓: select Task   space: toggle done   a: add Task   t: edit Task\n")
+	b.WriteString("e: edit Project   s: set lifecycle   d: archive   esc: back   q: quit\n")
+	return b.String()
+}
+
+// renderTaskRows lists the Project's loose Tasks in body order with a caret
+// against the selected row, a checkbox for completion, and any due date. An
+// empty list shows a hint; a load failure is surfaced, not hidden.
+func renderTaskRows(tasks []core.Task, selected int, loadErr error) string {
+	if loadErr != nil {
+		return "  Could not load Tasks: " + loadErr.Error() + "\n"
+	}
+	if len(tasks) == 0 {
+		return "  (no Tasks yet — press a to add one)\n"
+	}
+	var b strings.Builder
+	for i, task := range tasks {
+		marker := "  "
+		if i == selected {
+			marker = "> "
+		}
+		box := "[ ]"
+		if task.Done {
+			box = "[x]"
+		}
+		due := ""
+		if task.DueDate != nil {
+			due = "  (due " + task.DueDate.Format(taskDueDateLayout) + ")"
+		}
+		fmt.Fprintf(&b, "%s%s %s%s\n", marker, box, task.Title, due)
+		if strings.TrimSpace(task.Notes) != "" {
+			for _, line := range strings.Split(task.Notes, "\n") {
+				fmt.Fprintf(&b, "      %s\n", line)
+			}
+		}
+	}
 	return b.String()
 }
 

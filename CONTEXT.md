@@ -16,8 +16,9 @@ _Avoid_: initiative, effort
 
 **Task**:
 A single actionable step. Sits either directly in a Project's ordered body or
-inside a Milestone. May carry an optional due date and an optional Priority.
-Can be completed in any order; its position only feeds the Next step hint.
+inside a Milestone. May carry an optional due date, an optional Priority, and
+optional freeform notes (plain text, possibly multi-line). Can be completed in
+any order; its position only feeds the Next step hint.
 _Avoid_: todo, item, action item
 
 **Milestone**:
