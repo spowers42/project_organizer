@@ -33,6 +33,19 @@ func bodyTitles(t *testing.T, c *core.Core, projectID int64) []string {
 	return out
 }
 
+// selectedBodyLabel is the title (Task) or name (Milestone) of the Project
+// view's currently selected body entry, or "" when nothing is selected.
+func selectedBodyLabel(v *projectViewModel) string {
+	if v.bodySel < 0 || v.bodySel >= len(v.body) {
+		return ""
+	}
+	e := v.body[v.bodySel]
+	if e.Kind == core.MilestoneEntry {
+		return e.Milestone.Name
+	}
+	return e.Task.Title
+}
+
 // shift+down on the selected Task reorders the stored body and keeps the
 // selection on the moved Task.
 func TestProjectViewMoveTaskDown(t *testing.T) {
@@ -48,8 +61,8 @@ func TestProjectViewMoveTaskDown(t *testing.T) {
 	if got := bodyTitles(t, c, p.ID); !slices.Equal(got, []string{"beta", "alpha", "gamma"}) {
 		t.Errorf("body = %v, want alpha moved down one slot", got)
 	}
-	if v.tasks[v.taskSel].Title != "alpha" {
-		t.Errorf("selection = %q, want it to follow the moved Task", v.tasks[v.taskSel].Title)
+	if got := selectedBodyLabel(v); got != "alpha" {
+		t.Errorf("selection = %q, want it to follow the moved Task", got)
 	}
 	if !strings.Contains(v.View(), "> [ ] alpha") {
 		t.Errorf("view = %q, want the caret on the moved Task", v.View())
@@ -72,8 +85,8 @@ func TestProjectViewMoveTaskUp(t *testing.T) {
 	if got := bodyTitles(t, c, p.ID); !slices.Equal(got, []string{"beta", "alpha", "gamma"}) {
 		t.Errorf("body = %v, want beta moved up one slot", got)
 	}
-	if v.tasks[v.taskSel].Title != "beta" {
-		t.Errorf("selection = %q, want it to follow the moved Task", v.tasks[v.taskSel].Title)
+	if got := selectedBodyLabel(v); got != "beta" {
+		t.Errorf("selection = %q, want it to follow the moved Task", got)
 	}
 }
 
@@ -91,8 +104,8 @@ func TestProjectViewMoveTaskUpAtTopEdgeIsNoOp(t *testing.T) {
 	if got := bodyTitles(t, c, p.ID); !slices.Equal(got, []string{"alpha", "beta"}) {
 		t.Errorf("body = %v, want it unchanged at the top edge", got)
 	}
-	if v.taskSel != 0 {
-		t.Errorf("taskSel = %d, want 0", v.taskSel)
+	if v.bodySel != 0 {
+		t.Errorf("bodySel = %d, want 0", v.bodySel)
 	}
 }
 

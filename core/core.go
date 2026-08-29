@@ -58,10 +58,22 @@ type Store interface {
 	GetTask(ctx context.Context, id int64) (Task, error)
 	// ListProjectTasks returns a Project's loose Tasks in body order.
 	ListProjectTasks(ctx context.Context, projectID int64) ([]Task, error)
-	// SwapTaskPositions exchanges the body positions of two live loose Tasks
-	// in one transaction, reporting ErrTaskNotFound when either id matches no
-	// live row.
-	SwapTaskPositions(ctx context.Context, firstID, secondID int64) error
+
+	// CreateMilestone appends a Milestone to a Project's body (position after
+	// the existing entries, in the shared Task/Milestone position space) and
+	// returns it as stored.
+	CreateMilestone(ctx context.Context, projectID int64, name string) (Milestone, error)
+	// GetMilestone reads one live Milestone by id, reporting
+	// ErrMilestoneNotFound when it is missing or archived.
+	GetMilestone(ctx context.Context, id int64) (Milestone, error)
+	// ListProjectBody returns a Project's ordered body — its loose Tasks and
+	// Milestones interleaved by stored position.
+	ListProjectBody(ctx context.Context, projectID int64) ([]BodyEntry, error)
+	// SwapBodyPositions exchanges the body positions of two live slots in one
+	// transaction. Each slot is a loose Task or a Milestone, named by a BodyRef;
+	// a missing row is ErrTaskNotFound or ErrMilestoneNotFound and rolls the
+	// swap back.
+	SwapBodyPositions(ctx context.Context, a, b BodyRef) error
 }
 
 // Core holds the injected dependencies and exposes the application operations.

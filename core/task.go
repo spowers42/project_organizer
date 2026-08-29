@@ -34,18 +34,8 @@ type TaskInput struct {
 // Errors returned by the Task operations. Callers match them with errors.Is;
 // the entrypoints turn them into user-facing messages.
 var (
-	ErrEmptyTaskTitle  = errors.New("task title must not be empty")
-	ErrTaskNotFound    = errors.New("task not found")
-	ErrInvalidTaskMove = errors.New("invalid task move direction")
-)
-
-// TaskMove is the direction a loose Task moves within its Project body.
-type TaskMove int
-
-// The two move directions. Moving reorders within the Project-body scope only.
-const (
-	MoveUp TaskMove = iota
-	MoveDown
+	ErrEmptyTaskTitle = errors.New("task title must not be empty")
+	ErrTaskNotFound   = errors.New("task not found")
 )
 
 // AddTask appends a loose Task to the end of a Project's body. The title is
@@ -93,46 +83,21 @@ func (c *Core) ProjectTasks(ctx context.Context, projectID int64) ([]Task, error
 }
 
 // MoveTask reorders a loose Task one slot earlier (MoveUp) or later (MoveDown)
-// within its Project body, persisting the new order. Moving the first entry up
-// or the last entry down is a no-op. It returns the Project's loose Tasks in
-// the resulting body order. ErrInvalidTaskMove if dir is neither direction;
-// ErrTaskNotFound if id does not name a live Task.
-func (c *Core) MoveTask(ctx context.Context, id int64, dir TaskMove) ([]Task, error) {
+// within its Project body, persisting the new order. The neighbouring slot may
+// hold another loose Task or a Milestone; the move swaps with it either way, so
+// a loose Task can be positioned before, between, or after Milestones. Moving
+// the first entry up or the last entry down is a no-op. It returns the
+// Project's body in the resulting order. ErrInvalidMove if dir is neither
+// direction; ErrTaskNotFound if id does not name a live Task.
+func (c *Core) MoveTask(ctx context.Context, id int64, dir MoveDir) ([]BodyEntry, error) {
 	if dir != MoveUp && dir != MoveDown {
-		return nil, ErrInvalidTaskMove
+		return nil, ErrInvalidMove
 	}
 	task, err := c.store.GetTask(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := c.store.ListProjectTasks(ctx, task.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	idx := -1
-	for i, t := range tasks {
-		if t.ID == id {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		// Unreachable while the body holds only loose Tasks (GetTask just
-		// confirmed the id is live and gave us its ProjectID); kept as a guard
-		// for when a Milestone can hold a Task the body listing omits.
-		return nil, ErrTaskNotFound
-	}
-	neighbor := idx - 1
-	if dir == MoveDown {
-		neighbor = idx + 1
-	}
-	if neighbor < 0 || neighbor >= len(tasks) {
-		return tasks, nil // already at the edge; nothing to reorder
-	}
-	if err := c.store.SwapTaskPositions(ctx, tasks[idx].ID, tasks[neighbor].ID); err != nil {
-		return nil, err
-	}
-	return c.store.ListProjectTasks(ctx, task.ProjectID)
+	return c.moveBodyEntry(ctx, task.ProjectID, BodyRef{Kind: TaskEntry, ID: id}, dir)
 }
 
 // NextStep resolves the single Task a Project is waiting on right now: walking
