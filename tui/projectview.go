@@ -105,16 +105,19 @@ type bodyLoadedMsg struct {
 	err  error
 }
 
-// taskSavedMsg is the result of an add / edit / complete-toggle on a Task. A
-// nil err means the change persisted.
+// taskSavedMsg is the result of an edit or a complete-toggle on a Task. A nil
+// err means the change persisted.
 type taskSavedMsg struct {
 	err error
 }
 
-// milestoneSavedMsg is the result of adding a Milestone. A nil err means it
-// persisted.
-type milestoneSavedMsg struct {
-	err error
+// entryAddedMsg is the result of adding a body entry — a Task or a Milestone. On
+// success it carries the reloaded body plus the new entry's row key, so it shows
+// in place with the selection moved onto it.
+type entryAddedMsg struct {
+	body []core.BodyEntry
+	sel  bodyRowKey
+	err  error
 }
 
 // bodyMovedMsg is the result of reordering a row — a loose Task, a Milestone, or
@@ -144,14 +147,6 @@ func (v *projectViewModel) loadBody() tea.Msg {
 	return bodyLoadedMsg{body: entries, err: err}
 }
 
-// addTask appends a loose Task to the Project from the form's fields.
-func (v *projectViewModel) addTask(in core.TaskInput) tea.Cmd {
-	return func() tea.Msg {
-		_, err := v.core.AddTask(context.Background(), v.projectID, in)
-		return taskSavedMsg{err: err}
-	}
-}
-
 // editTask rewrites a Task's title and due date from the form's fields.
 func (v *projectViewModel) editTask(id int64, in core.TaskInput) tea.Cmd {
 	return func() tea.Msg {
@@ -160,12 +155,35 @@ func (v *projectViewModel) editTask(id int64, in core.TaskInput) tea.Cmd {
 	}
 }
 
-// addMilestoneTask appends a Task inside the given Milestone from the form's
-// fields.
-func (v *projectViewModel) addMilestoneTask(milestoneID int64, in core.TaskInput) tea.Cmd {
+// addTaskCmd runs a Task-creating core call, then reloads the body so the new
+// Task shows in its place with the selection moved onto it.
+func (v *projectViewModel) addTaskCmd(create func(context.Context) (core.Task, error)) tea.Cmd {
 	return func() tea.Msg {
-		_, err := v.core.AddMilestoneTask(context.Background(), milestoneID, in)
-		return taskSavedMsg{err: err}
+		ctx := context.Background()
+		t, err := create(ctx)
+		if err != nil {
+			return entryAddedMsg{err: err}
+		}
+		kind := looseTaskRow
+		if t.MilestoneID != nil {
+			kind = milestoneTaskRow
+		}
+		body, err := v.core.ProjectBody(ctx, v.projectID)
+		return entryAddedMsg{body: body, sel: bodyRowKey{kind: kind, id: t.ID}, err: err}
+	}
+}
+
+// addMilestoneCmd runs a Milestone-creating core call, then reloads the body so
+// the new Milestone shows in its place with the selection moved onto it.
+func (v *projectViewModel) addMilestoneCmd(create func(context.Context) (core.Milestone, error)) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		m, err := create(ctx)
+		if err != nil {
+			return entryAddedMsg{err: err}
+		}
+		body, err := v.core.ProjectBody(ctx, v.projectID)
+		return entryAddedMsg{body: body, sel: bodyRowKey{kind: milestoneHeadRow, id: m.ID}, err: err}
 	}
 }
 
@@ -174,14 +192,6 @@ func (v *projectViewModel) toggleTask(task core.Task) tea.Cmd {
 	return func() tea.Msg {
 		_, err := v.core.SetTaskDone(context.Background(), task.ID, !task.Done)
 		return taskSavedMsg{err: err}
-	}
-}
-
-// addMilestone appends a Milestone with the given name to the Project body.
-func (v *projectViewModel) addMilestone(name string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := v.core.AddMilestone(context.Background(), v.projectID, name)
-		return milestoneSavedMsg{err: err}
 	}
 }
 
@@ -258,27 +268,21 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 		v.overlay.close()
 		v.status = "Saved."
 		return v.loadBody
-	case milestoneSavedMsg:
+	case entryAddedMsg:
 		if msg.err != nil {
 			v.status = errorMessage(msg.err)
 			return nil // keep the overlay open to fix and retry
 		}
 		v.overlay.close()
-		v.status = "Milestone added."
-		return v.loadBody
+		v.status = "Saved."
+		v.applyBody(msg.body, msg.sel)
+		return nil
 	case bodyMovedMsg:
 		if msg.err != nil {
 			v.status = errorMessage(msg.err)
 			return nil
 		}
-		v.body, v.bodyErr = msg.body, nil
-		v.rows = flattenBody(msg.body)
-		for i, r := range v.rows {
-			if r.key() == msg.sel {
-				v.bodySel = i
-				break
-			}
-		}
+		v.applyBody(msg.body, msg.sel)
 		return nil
 	case categoriesLoadedMsg:
 		v.cats = msg.cats
@@ -337,20 +341,21 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	case "a":
 		if v.ready() {
-			target := taskFormTarget{}
-			heading := "Add Task"
-			if mid, ok := v.selectedMilestoneID(); ok {
-				target = taskFormTarget{milestoneID: mid}
-				heading = "Add Task to Milestone"
-			}
+			target, heading := v.addTaskTargetAtCursor()
 			f := newTaskForm(heading, nil)
 			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, target) })
 			v.status = ""
 		}
 	case "m":
 		if v.ready() {
+			anchor := v.addEntryAnchorAtCursor()
 			f := newMilestoneForm("Add Milestone")
-			v.overlay.open(&f, func() tea.Cmd { return v.addMilestone(f.name()) })
+			v.overlay.open(&f, func() tea.Cmd {
+				name := f.name()
+				return v.addMilestoneCmd(func(ctx context.Context) (core.Milestone, error) {
+					return v.core.AddMilestoneAfter(ctx, v.projectID, anchor, name)
+				})
+			})
 			v.status = ""
 		}
 	case "t":
@@ -421,29 +426,72 @@ func (v *projectViewModel) selectedTask() (core.Task, bool) {
 	return r.task, true
 }
 
-// selectedMilestoneID returns the Milestone the selection sits in — the header
-// itself, or a Task nested under it — so "add Task" can target that Milestone.
-func (v *projectViewModel) selectedMilestoneID() (int64, bool) {
-	r, ok := v.selectedRow()
-	if !ok {
-		return 0, false
+// applyBody swaps in a freshly loaded body and moves the selection onto the row
+// named by sel, keeping bodySel valid when that row is gone.
+func (v *projectViewModel) applyBody(body []core.BodyEntry, sel bodyRowKey) {
+	v.body, v.bodyErr = body, nil
+	v.rows = flattenBody(body)
+	for i, r := range v.rows {
+		if r.key() == sel {
+			v.bodySel = i
+			return
+		}
 	}
-	switch r.kind {
-	case milestoneHeadRow:
-		return r.milestone.ID, true
-	case milestoneTaskRow:
-		return r.milestoneID, true
-	default:
-		return 0, false
+	if v.bodySel >= len(v.rows) {
+		v.bodySel = 0
 	}
 }
 
-// taskFormTarget says what a submitted Task form does: edit an existing Task
-// (editID set), add one inside a Milestone (milestoneID set), or — both zero —
-// add a loose Task to the Project body.
+// taskFormTarget says what a submitted Task form does:
+//   - editID set: edit that Task.
+//   - milestoneID set: insert into that Milestone just after afterTaskID
+//     (afterTaskID 0 puts it first).
+//   - afterTaskID set alone: insert a loose Task just after that Task.
+//   - all zero: append a loose Task to the Project body.
 type taskFormTarget struct {
 	editID      int64
 	milestoneID int64
+	afterTaskID int64
+}
+
+// addTaskTargetAtCursor decides where a new Task goes: just below the selection,
+// so "add" drops it at the cursor rather than always at the end. On a loose Task
+// it lands right after that Task; on a Milestone header it becomes the
+// Milestone's first Task; on a nested Task it lands right after that one; with no
+// selection it appends to the Project body.
+func (v *projectViewModel) addTaskTargetAtCursor() (taskFormTarget, string) {
+	r, ok := v.selectedRow()
+	if !ok {
+		return taskFormTarget{}, "Add Task"
+	}
+	switch r.kind {
+	case milestoneHeadRow:
+		return taskFormTarget{milestoneID: r.milestone.ID}, "Add Task to Milestone"
+	case milestoneTaskRow:
+		return taskFormTarget{milestoneID: r.milestoneID, afterTaskID: r.task.ID}, "Add Task to Milestone"
+	default:
+		return taskFormTarget{afterTaskID: r.task.ID}, "Add Task"
+	}
+}
+
+// addEntryAnchorAtCursor is the body slot a new Milestone should land just after
+// — the selection's place in the body. On a loose Task or a Milestone header it
+// is that entry; on a nested Task it is the enclosing Milestone (a Milestone
+// cannot nest). With no selection it is the zero BodyRef, which inserts at the
+// front.
+func (v *projectViewModel) addEntryAnchorAtCursor() core.BodyRef {
+	r, ok := v.selectedRow()
+	if !ok {
+		return core.BodyRef{}
+	}
+	switch r.kind {
+	case milestoneHeadRow:
+		return core.BodyRef{Kind: core.MilestoneEntry, ID: r.milestone.ID}
+	case milestoneTaskRow:
+		return core.BodyRef{Kind: core.MilestoneEntry, ID: r.milestoneID}
+	default:
+		return core.BodyRef{Kind: core.TaskEntry, ID: r.task.ID}
+	}
 }
 
 // submitTaskForm turns the form's fields into the core call named by target. A
@@ -458,9 +506,19 @@ func (v *projectViewModel) submitTaskForm(f *taskForm, target taskFormTarget) te
 	case target.editID != 0:
 		return v.editTask(target.editID, in)
 	case target.milestoneID != 0:
-		return v.addMilestoneTask(target.milestoneID, in)
+		mid, after := target.milestoneID, target.afterTaskID
+		return v.addTaskCmd(func(ctx context.Context) (core.Task, error) {
+			return v.core.AddMilestoneTaskAfter(ctx, mid, after, in)
+		})
+	case target.afterTaskID != 0:
+		after := target.afterTaskID
+		return v.addTaskCmd(func(ctx context.Context) (core.Task, error) {
+			return v.core.AddTaskAfter(ctx, v.projectID, after, in)
+		})
 	default:
-		return v.addTask(in)
+		return v.addTaskCmd(func(ctx context.Context) (core.Task, error) {
+			return v.core.AddTask(ctx, v.projectID, in)
+		})
 	}
 }
 

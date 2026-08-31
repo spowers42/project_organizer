@@ -69,6 +69,66 @@ func TestAddMilestoneUnknownProjectErrors(t *testing.T) {
 	}
 }
 
+func TestAddMilestoneAfterDropsBelowTheCursorSlot(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "Insert milestone", categoryID(t, c, "Programming"))
+
+	first := mustAddTask(t, c, p.ID, "first")
+	mustAddTask(t, c, p.ID, "last")
+	gate := mustAddMilestone(t, c, p.ID, "Gate") // body: first, last, Gate
+
+	// After a loose Task.
+	if _, err := c.AddMilestoneAfter(ctx, p.ID, core.BodyRef{Kind: core.TaskEntry, ID: first.ID}, "Kickoff"); err != nil {
+		t.Fatalf("AddMilestoneAfter(after task): %v", err)
+	}
+	if got := projectBodyLabels(t, c, p.ID); !equalStrings(got, []string{"task:first", "ms:Kickoff", "task:last", "ms:Gate"}) {
+		t.Fatalf("body = %v, want Kickoff right after first", got)
+	}
+
+	// After a Milestone.
+	if _, err := c.AddMilestoneAfter(ctx, p.ID, core.BodyRef{Kind: core.MilestoneEntry, ID: gate.ID}, "Wrap"); err != nil {
+		t.Fatalf("AddMilestoneAfter(after milestone): %v", err)
+	}
+	if got := projectBodyLabels(t, c, p.ID); !equalStrings(got, []string{"task:first", "ms:Kickoff", "task:last", "ms:Gate", "ms:Wrap"}) {
+		t.Fatalf("body = %v, want Wrap right after Gate", got)
+	}
+
+	// Zero anchor inserts at the front.
+	if _, err := c.AddMilestoneAfter(ctx, p.ID, core.BodyRef{}, "Prep"); err != nil {
+		t.Fatalf("AddMilestoneAfter(front): %v", err)
+	}
+	if got := projectBodyLabels(t, c, p.ID); !equalStrings(got, []string{"ms:Prep", "task:first", "ms:Kickoff", "task:last", "ms:Gate", "ms:Wrap"}) {
+		t.Errorf("body = %v, want Prep first", got)
+	}
+}
+
+func TestAddMilestoneAfterErrorCases(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "P", categoryID(t, c, "Programming"))
+	loose := mustAddTask(t, c, p.ID, "loose")
+	m := mustAddMilestone(t, c, p.ID, "Alpha")
+	nested := mustAddMilestoneTask(t, c, m.ID, "nested")
+
+	if _, err := c.AddMilestoneAfter(ctx, 9090, core.BodyRef{}, "x"); !errors.Is(err, core.ErrProjectNotFound) {
+		t.Errorf("unknown project: error = %v, want ErrProjectNotFound", err)
+	}
+	if _, err := c.AddMilestoneAfter(ctx, p.ID, core.BodyRef{Kind: core.TaskEntry, ID: loose.ID}, "   "); !errors.Is(err, core.ErrEmptyMilestoneName) {
+		t.Errorf("blank name: error = %v, want ErrEmptyMilestoneName", err)
+	}
+	if _, err := c.AddMilestoneAfter(ctx, p.ID, core.BodyRef{Kind: core.TaskEntry, ID: 7777}, "x"); !errors.Is(err, core.ErrTaskNotFound) {
+		t.Errorf("unknown task anchor: error = %v, want ErrTaskNotFound", err)
+	}
+	if _, err := c.AddMilestoneAfter(ctx, p.ID, core.BodyRef{Kind: core.MilestoneEntry, ID: 7777}, "x"); !errors.Is(err, core.ErrMilestoneNotFound) {
+		t.Errorf("unknown milestone anchor: error = %v, want ErrMilestoneNotFound", err)
+	}
+	// A nested Milestone Task is not a body slot.
+	if _, err := c.AddMilestoneAfter(ctx, p.ID, core.BodyRef{Kind: core.TaskEntry, ID: nested.ID}, "x"); !errors.Is(err, core.ErrTaskNotFound) {
+		t.Errorf("nested task anchor: error = %v, want ErrTaskNotFound", err)
+	}
+}
+
 func TestProjectBodyInterleavesTasksAndMilestones(t *testing.T) {
 	c, _ := newTestCore(t)
 	p := mustCreateProject(t, c, "Interleave", categoryID(t, c, "Programming"))

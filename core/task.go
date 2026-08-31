@@ -54,6 +54,22 @@ func (c *Core) AddTask(ctx context.Context, projectID int64, in TaskInput) (Task
 	return c.store.CreateTask(ctx, projectID, title, in.DueDate, in.Notes)
 }
 
+// AddTaskAfter inserts a loose Task into a Project's body one place after the
+// slot afterTaskID holds — just below the cursor — pushing the following entries
+// one place later. afterTaskID 0 inserts at the front. Same title validation as
+// AddTask. ErrProjectNotFound if projectID names no live Project; ErrTaskNotFound
+// if a non-zero afterTaskID is not one of its loose Tasks.
+func (c *Core) AddTaskAfter(ctx context.Context, projectID, afterTaskID int64, in TaskInput) (Task, error) {
+	if _, err := c.store.GetProject(ctx, projectID); err != nil {
+		return Task{}, err
+	}
+	title, err := validateTaskInput(in)
+	if err != nil {
+		return Task{}, err
+	}
+	return c.store.CreateTaskAfter(ctx, projectID, afterTaskID, title, in.DueDate, in.Notes)
+}
+
 // EditTask rewrites a Task's title and due date. Same title validation as
 // AddTask; a nil DueDate clears the due date. ErrTaskNotFound if id does not
 // name a live Task — reported as such even when the input is also invalid.

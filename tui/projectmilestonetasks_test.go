@@ -112,16 +112,17 @@ func TestProjectViewAddTaskIntoSelectedMilestone(t *testing.T) {
 	}
 }
 
-// With a nested Task selected, a adds another Task into the same Milestone.
+// With a nested Task selected, a inserts the new Task into the same Milestone
+// just below the cursor — after the selected Task, not at the end.
 func TestProjectViewAddTaskFromNestedSelection(t *testing.T) {
 	c := newTestCore(t)
 	p := mustProject(t, c, "Add sibling")
 	m := seedMilestoneReturning(t, c, p.ID, "Alpha")
-	seedMilestoneTasks(t, c, m.ID, "a1")
+	seedMilestoneTasks(t, c, m.ID, "a1", "a3")
 
 	v := newProjectView(c, p.ID)
 	drainInit(v.Update, v.Init())
-	v.Update(key("down")) // select the nested "a1"
+	v.Update(key("down")) // select "a1"
 
 	v.Update(key("a"))
 	for _, msg := range typeString("a2") {
@@ -129,8 +130,34 @@ func TestProjectViewAddTaskFromNestedSelection(t *testing.T) {
 	}
 	runCmd(v.Update, v.Update(key("enter")))
 
-	if got := milestoneTaskTitles(t, c, m.ID); !slices.Equal(got, []string{"a1", "a2"}) {
-		t.Errorf("milestone tasks = %v, want both siblings inside the Milestone", got)
+	if got := milestoneTaskTitles(t, c, m.ID); !slices.Equal(got, []string{"a1", "a2", "a3"}) {
+		t.Errorf("milestone tasks = %v, want the new Task just after the selected one", got)
+	}
+	if got := selectedBodyLabel(v); got != "a2" {
+		t.Errorf("selection = %q, want the cursor on the inserted nested Task", got)
+	}
+}
+
+// With a Milestone header selected, a inserts the new Task as the Milestone's
+// first Task.
+func TestProjectViewAddTaskFromMilestoneHeaderInsertsFirst(t *testing.T) {
+	c := newTestCore(t)
+	p := mustProject(t, c, "Header add")
+	m := seedMilestoneReturning(t, c, p.ID, "Alpha")
+	seedMilestoneTasks(t, c, m.ID, "a2", "a3")
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+	// "Alpha" header is row 0 and selected.
+
+	v.Update(key("a"))
+	for _, msg := range typeString("a1") {
+		v.Update(msg)
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	if got := milestoneTaskTitles(t, c, m.ID); !slices.Equal(got, []string{"a1", "a2", "a3"}) {
+		t.Errorf("milestone tasks = %v, want the new Task first", got)
 	}
 }
 

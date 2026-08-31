@@ -42,6 +42,23 @@ func (c *Core) AddMilestone(ctx context.Context, projectID int64, name string) (
 	return c.store.CreateMilestone(ctx, projectID, trimmed)
 }
 
+// AddMilestoneAfter inserts a Milestone into a Project's body one place after the
+// body slot `after` holds — just below the cursor — pushing the following
+// entries one place later. A zero `after` inserts at the front. Same name
+// validation as AddMilestone. ErrProjectNotFound if projectID names no live
+// Project; ErrTaskNotFound / ErrMilestoneNotFound if a non-zero `after` names no
+// live body slot of the Project.
+func (c *Core) AddMilestoneAfter(ctx context.Context, projectID int64, after BodyRef, name string) (Milestone, error) {
+	if _, err := c.store.GetProject(ctx, projectID); err != nil {
+		return Milestone{}, err
+	}
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return Milestone{}, ErrEmptyMilestoneName
+	}
+	return c.store.CreateMilestoneAfter(ctx, projectID, after, trimmed)
+}
+
 // ProjectBody returns a Project's ordered body: its loose Tasks and Milestones
 // interleaved in stored order. ErrProjectNotFound if projectID does not name a
 // live Project.
@@ -65,6 +82,23 @@ func (c *Core) AddMilestoneTask(ctx context.Context, milestoneID int64, in TaskI
 		return Task{}, err
 	}
 	return c.store.CreateMilestoneTask(ctx, milestoneID, title, in.DueDate, in.Notes)
+}
+
+// AddMilestoneTaskAfter inserts a Task into a Milestone's ordered list one place
+// after the slot afterTaskID holds — just below the cursor — pushing the
+// following Tasks one place later. afterTaskID 0 inserts at the front. Same title
+// validation as AddMilestoneTask. ErrMilestoneNotFound if milestoneID names no
+// live Milestone; ErrTaskNotFound if a non-zero afterTaskID is not one of its
+// Tasks.
+func (c *Core) AddMilestoneTaskAfter(ctx context.Context, milestoneID, afterTaskID int64, in TaskInput) (Task, error) {
+	if _, err := c.store.GetMilestone(ctx, milestoneID); err != nil {
+		return Task{}, err
+	}
+	title, err := validateTaskInput(in)
+	if err != nil {
+		return Task{}, err
+	}
+	return c.store.CreateMilestoneTaskAfter(ctx, milestoneID, afterTaskID, title, in.DueDate, in.Notes)
 }
 
 // MilestoneTasks returns a Milestone's Tasks in Milestone order.

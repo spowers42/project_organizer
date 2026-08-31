@@ -80,6 +80,114 @@ func TestAddMilestoneTaskValidation(t *testing.T) {
 	}
 }
 
+func TestAddTaskAfterDropsBelowTheCursorSlot(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "Insert", categoryID(t, c, "Programming"))
+
+	first := mustAddTask(t, c, p.ID, "first")
+	mustAddTask(t, c, p.ID, "third")
+	mustAddMilestone(t, c, p.ID, "Gate") // body: first, third, Gate
+
+	// Insert "second" just after "first".
+	inserted, err := c.AddTaskAfter(ctx, p.ID, first.ID, core.TaskInput{Title: "second"})
+	if err != nil {
+		t.Fatalf("AddTaskAfter: %v", err)
+	}
+	if inserted.MilestoneID != nil {
+		t.Errorf("inserted.MilestoneID = %v, want nil (a loose Task)", inserted.MilestoneID)
+	}
+	if got := projectBodyLabels(t, c, p.ID); !equalStrings(got, []string{"task:first", "task:second", "task:third", "ms:Gate"}) {
+		t.Errorf("body = %v, want second between first and third with Gate still last", got)
+	}
+
+	// afterTaskID 0 inserts at the front; Next step follows.
+	if _, err := c.AddTaskAfter(ctx, p.ID, 0, core.TaskInput{Title: "zero"}); err != nil {
+		t.Fatalf("AddTaskAfter(front): %v", err)
+	}
+	if got := projectBodyLabels(t, c, p.ID); !equalStrings(got, []string{"task:zero", "task:first", "task:second", "task:third", "ms:Gate"}) {
+		t.Errorf("body = %v, want zero first", got)
+	}
+	assertNextStep(t, c, p.ID, looseTaskByTitle(t, c, p.ID, "zero").ID, "zero")
+}
+
+func TestAddTaskAfterErrorCases(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "P", categoryID(t, c, "Programming"))
+	loose := mustAddTask(t, c, p.ID, "loose")
+	m := mustAddMilestone(t, c, p.ID, "Alpha")
+	nested := mustAddMilestoneTask(t, c, m.ID, "nested")
+
+	if _, err := c.AddTaskAfter(ctx, 9090, loose.ID, core.TaskInput{Title: "x"}); !errors.Is(err, core.ErrProjectNotFound) {
+		t.Errorf("unknown project: error = %v, want ErrProjectNotFound", err)
+	}
+	if _, err := c.AddTaskAfter(ctx, p.ID, loose.ID, core.TaskInput{Title: "  "}); !errors.Is(err, core.ErrEmptyTaskTitle) {
+		t.Errorf("blank title: error = %v, want ErrEmptyTaskTitle", err)
+	}
+	if _, err := c.AddTaskAfter(ctx, p.ID, 7777, core.TaskInput{Title: "x"}); !errors.Is(err, core.ErrTaskNotFound) {
+		t.Errorf("unknown afterTaskID: error = %v, want ErrTaskNotFound", err)
+	}
+	// A Milestone Task is not a loose Task of the body.
+	if _, err := c.AddTaskAfter(ctx, p.ID, nested.ID, core.TaskInput{Title: "x"}); !errors.Is(err, core.ErrTaskNotFound) {
+		t.Errorf("milestone task as anchor: error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestAddMilestoneTaskAfterDropsBelowTheCursorSlot(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "Insert nested", categoryID(t, c, "Programming"))
+	m := mustAddMilestone(t, c, p.ID, "Alpha")
+	a1 := mustAddMilestoneTask(t, c, m.ID, "a1")
+	mustAddMilestoneTask(t, c, m.ID, "a3")
+
+	inserted, err := c.AddMilestoneTaskAfter(ctx, m.ID, a1.ID, core.TaskInput{Title: "a2"})
+	if err != nil {
+		t.Fatalf("AddMilestoneTaskAfter: %v", err)
+	}
+	if inserted.MilestoneID == nil || *inserted.MilestoneID != m.ID {
+		t.Errorf("inserted.MilestoneID = %v, want %d", inserted.MilestoneID, m.ID)
+	}
+	if got := milestoneTaskTitles(t, c, m.ID); !equalStrings(got, []string{"a1", "a2", "a3"}) {
+		t.Errorf("milestone tasks = %v, want a2 inserted after a1", got)
+	}
+
+	// afterTaskID 0 inserts at the front of the Milestone.
+	if _, err := c.AddMilestoneTaskAfter(ctx, m.ID, 0, core.TaskInput{Title: "a0"}); err != nil {
+		t.Fatalf("AddMilestoneTaskAfter(front): %v", err)
+	}
+	if got := milestoneTaskTitles(t, c, m.ID); !equalStrings(got, []string{"a0", "a1", "a2", "a3"}) {
+		t.Errorf("milestone tasks = %v, want a0 first", got)
+	}
+}
+
+func TestAddMilestoneTaskAfterErrorCases(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "P", categoryID(t, c, "Programming"))
+	m := mustAddMilestone(t, c, p.ID, "Alpha")
+	nested := mustAddMilestoneTask(t, c, m.ID, "nested")
+	loose := mustAddTask(t, c, p.ID, "loose")
+
+	if _, err := c.AddMilestoneTaskAfter(ctx, 9090, nested.ID, core.TaskInput{Title: "x"}); !errors.Is(err, core.ErrMilestoneNotFound) {
+		t.Errorf("unknown milestone: error = %v, want ErrMilestoneNotFound", err)
+	}
+	if _, err := c.AddMilestoneTaskAfter(ctx, 9090, 0, core.TaskInput{Title: "x"}); !errors.Is(err, core.ErrMilestoneNotFound) {
+		t.Errorf("unknown milestone (front): error = %v, want ErrMilestoneNotFound", err)
+	}
+	if _, err := c.AddMilestoneTaskAfter(ctx, m.ID, nested.ID, core.TaskInput{Title: " "}); !errors.Is(err, core.ErrEmptyTaskTitle) {
+		t.Errorf("blank title: error = %v, want ErrEmptyTaskTitle", err)
+	}
+	if _, err := c.AddMilestoneTaskAfter(ctx, m.ID, 7777, core.TaskInput{Title: "x"}); !errors.Is(err, core.ErrTaskNotFound) {
+		t.Errorf("unknown afterTaskID: error = %v, want ErrTaskNotFound", err)
+	}
+	// A loose Task is not a Task of this Milestone.
+	if _, err := c.AddMilestoneTaskAfter(ctx, m.ID, loose.ID, core.TaskInput{Title: "x"}); !errors.Is(err, core.ErrTaskNotFound) {
+		t.Errorf("loose task as anchor: error = %v, want ErrTaskNotFound", err)
+	}
+}
+
 func TestMilestoneTasksUnknownMilestoneErrors(t *testing.T) {
 	c, _ := newTestCore(t)
 
@@ -282,4 +390,20 @@ func mustSetDone(t *testing.T, c *core.Core, id int64) {
 	if _, err := c.SetTaskDone(context.Background(), id, true); err != nil {
 		t.Fatalf("SetTaskDone(%d): %v", id, err)
 	}
+}
+
+// looseTaskByTitle returns a Project's loose Task with the given title.
+func looseTaskByTitle(t *testing.T, c *core.Core, projectID int64, title string) core.Task {
+	t.Helper()
+	tasks, err := c.ProjectTasks(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("ProjectTasks: %v", err)
+	}
+	for _, tk := range tasks {
+		if tk.Title == title {
+			return tk
+		}
+	}
+	t.Fatalf("loose task %q not found in project %d", title, projectID)
+	return core.Task{}
 }

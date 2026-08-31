@@ -112,6 +112,125 @@ func (s *Store) CreateMilestoneTask(ctx context.Context, milestoneID int64, titl
 	return s.GetTask(ctx, id)
 }
 
+// CreateTaskAfter inserts a loose Task into a Project's body one place after the
+// slot afterTaskID currently holds, shifting that following slot and every later
+// one — loose Tasks and Milestones alike, since they share the position space
+// (ADR 0001) — a place later. afterTaskID 0 inserts at the front of the body.
+// A non-zero afterTaskID must be a live loose Task of the Project; otherwise
+// core.ErrTaskNotFound.
+func (s *Store) CreateTaskAfter(ctx context.Context, projectID, afterTaskID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return core.Task{}, fmt.Errorf("inserting task: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var insertPos int64
+	if afterTaskID != 0 {
+		var pos int64
+		err = tx.QueryRowContext(ctx,
+			"SELECT position FROM tasks WHERE id = ? AND project_id = ? AND milestone_id IS NULL AND archived_at IS NULL",
+			afterTaskID, projectID,
+		).Scan(&pos)
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.Task{}, core.ErrTaskNotFound
+		}
+		if err != nil {
+			return core.Task{}, fmt.Errorf("reading task %d position: %w", afterTaskID, err)
+		}
+		insertPos = pos + 1
+	}
+
+	if err := shiftBodyPositions(ctx, tx, projectID, insertPos); err != nil {
+		return core.Task{}, err
+	}
+	id, err := insertTaskRow(ctx, tx,
+		"INSERT INTO tasks (project_id, title, due_date, notes, done, position) VALUES (?, ?, ?, ?, 0, ?)",
+		projectID, title, formatDue(dueDate), notes, insertPos,
+	)
+	if err != nil {
+		return core.Task{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return core.Task{}, fmt.Errorf("inserting task: %w", err)
+	}
+	return s.GetTask(ctx, id)
+}
+
+// CreateMilestoneTaskAfter inserts a Task into a Milestone's own ordered list one
+// place after the slot afterTaskID currently holds, shifting that following Task
+// and every later one in the Milestone a place later. afterTaskID 0 inserts at
+// the front of the Milestone. A non-zero afterTaskID must be a live Task of the
+// Milestone; otherwise core.ErrTaskNotFound. A milestoneID naming no live
+// Milestone is core.ErrMilestoneNotFound.
+func (s *Store) CreateMilestoneTaskAfter(ctx context.Context, milestoneID, afterTaskID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return core.Task{}, fmt.Errorf("inserting milestone task: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		projectID int64
+		insertPos int64
+	)
+	if afterTaskID != 0 {
+		var pos int64
+		err = tx.QueryRowContext(ctx,
+			"SELECT project_id, position FROM tasks WHERE id = ? AND milestone_id = ? AND archived_at IS NULL",
+			afterTaskID, milestoneID,
+		).Scan(&projectID, &pos)
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.Task{}, core.ErrTaskNotFound
+		}
+		if err != nil {
+			return core.Task{}, fmt.Errorf("reading milestone task %d position: %w", afterTaskID, err)
+		}
+		insertPos = pos + 1
+	} else {
+		err = tx.QueryRowContext(ctx,
+			"SELECT project_id FROM milestones WHERE id = ? AND archived_at IS NULL", milestoneID,
+		).Scan(&projectID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.Task{}, core.ErrMilestoneNotFound
+		}
+		if err != nil {
+			return core.Task{}, fmt.Errorf("reading milestone %d: %w", milestoneID, err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET position = position + 1 WHERE milestone_id = ? AND archived_at IS NULL AND position >= ?",
+		milestoneID, insertPos,
+	); err != nil {
+		return core.Task{}, fmt.Errorf("shifting milestone task positions: %w", err)
+	}
+	id, err := insertTaskRow(ctx, tx,
+		"INSERT INTO tasks (project_id, milestone_id, title, due_date, notes, done, position) VALUES (?, ?, ?, ?, ?, 0, ?)",
+		projectID, milestoneID, title, formatDue(dueDate), notes, insertPos,
+	)
+	if err != nil {
+		return core.Task{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return core.Task{}, fmt.Errorf("inserting milestone task: %w", err)
+	}
+	return s.GetTask(ctx, id)
+}
+
+// insertTaskRow runs an INSERT into tasks within tx and returns the new row id.
+func insertTaskRow(ctx context.Context, tx *sql.Tx, query string, args ...any) (int64, error) {
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("inserting task: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("inserting task: %w", err)
+	}
+	return id, nil
+}
+
 // UpdateTask rewrites a live Task's title, due date, and notes.
 func (s *Store) UpdateTask(ctx context.Context, id int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
 	return s.updateTask(ctx, id,

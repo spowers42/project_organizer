@@ -66,6 +66,31 @@ func TestProjectViewAddMilestoneFlow(t *testing.T) {
 	}
 }
 
+// m drops the new Milestone just below the selection cursor, not at the end, and
+// the cursor follows onto it.
+func TestProjectViewAddMilestoneInsertsBelowCursor(t *testing.T) {
+	c := newTestCore(t)
+	p := mustProject(t, c, "Insert")
+	seedTasks(t, c, p.ID, "first", "last")
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+	// "first" is row 0 and selected.
+
+	v.Update(key("m"))
+	for _, msg := range typeString("Gate") {
+		v.Update(msg)
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	if got := bodyLabelsOf(t, c, p.ID); !slices.Equal(got, []string{"task:first", "ms:Gate", "task:last"}) {
+		t.Fatalf("body = %v, want Gate between first and last", got)
+	}
+	if got := selectedBodyLabel(v); got != "Gate" {
+		t.Errorf("selection = %q, want the cursor on the new Milestone", got)
+	}
+}
+
 // The body view lists loose Tasks and Milestones interleaved in stored order.
 func TestProjectViewRendersInterleavedBody(t *testing.T) {
 	c := newTestCore(t)

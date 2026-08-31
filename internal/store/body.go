@@ -46,6 +46,26 @@ func (s *Store) nextBodyPosition(ctx context.Context, projectID int64) (int64, e
 	return next, nil
 }
 
+// shiftBodyPositions moves every live body slot of a Project at or after fromPos
+// one place later, across both loose Tasks and Milestones (they share the
+// position space), opening fromPos for an insert. Runs inside the caller's
+// transaction.
+func shiftBodyPositions(ctx context.Context, tx *sql.Tx, projectID, fromPos int64) error {
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET position = position + 1 WHERE project_id = ? AND milestone_id IS NULL AND archived_at IS NULL AND position >= ?",
+		projectID, fromPos,
+	); err != nil {
+		return fmt.Errorf("shifting task positions for project %d: %w", projectID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE milestones SET position = position + 1 WHERE project_id = ? AND archived_at IS NULL AND position >= ?",
+		projectID, fromPos,
+	); err != nil {
+		return fmt.Errorf("shifting milestone positions for project %d: %w", projectID, err)
+	}
+	return nil
+}
+
 // positionedEntry pairs a body entry with its stored position, the key
 // ListProjectBody merges the two slot tables on.
 type positionedEntry struct {

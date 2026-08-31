@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,41 @@ func TestProjectViewAddTaskFlow(t *testing.T) {
 	}
 	if !strings.Contains(v.View(), "draft the design") {
 		t.Errorf("view = %q, want the new Task listed", v.View())
+	}
+}
+
+// Adding a loose Task drops it just below the selection cursor, not at the end,
+// and the cursor follows onto it.
+func TestProjectViewAddTaskInsertsBelowCursor(t *testing.T) {
+	c := newTestCore(t)
+	p := mustProject(t, c, "Insert")
+	seedTasks(t, c, p.ID, "first", "third")
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+	// "first" is row 0 and selected.
+
+	v.Update(key("a"))
+	for _, m := range typeString("second") {
+		v.Update(m)
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	if got := bodyTitles(t, c, p.ID); !slices.Equal(got, []string{"first", "second", "third"}) {
+		t.Fatalf("tasks = %v, want the new one just below the cursor", got)
+	}
+	if got := selectedBodyLabel(v); got != "second" {
+		t.Errorf("selection = %q, want the cursor on the inserted Task", got)
+	}
+
+	// A second add from the new position keeps appending downward, in order.
+	v.Update(key("a"))
+	for _, m := range typeString("second-and-a-half") {
+		v.Update(m)
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+	if got := bodyTitles(t, c, p.ID); !slices.Equal(got, []string{"first", "second", "second-and-a-half", "third"}) {
+		t.Errorf("tasks = %v, want successive adds to march downward", got)
 	}
 }
 

@@ -63,6 +63,17 @@ type Store interface {
 	// (position after that Milestone's existing Tasks) and returns it as stored.
 	// Reports ErrMilestoneNotFound when milestoneID names no live Milestone.
 	CreateMilestoneTask(ctx context.Context, milestoneID int64, title string, dueDate *time.Time, notes string) (Task, error)
+	// CreateTaskAfter inserts a loose Task one place after the body slot
+	// afterTaskID holds (afterTaskID 0 inserts at the front), shifting the
+	// following slots later. Reports ErrTaskNotFound when a non-zero afterTaskID
+	// is not a live loose Task of the Project.
+	CreateTaskAfter(ctx context.Context, projectID, afterTaskID int64, title string, dueDate *time.Time, notes string) (Task, error)
+	// CreateMilestoneTaskAfter inserts a Task one place after the slot afterTaskID
+	// holds in a Milestone's ordered list (afterTaskID 0 inserts at the front),
+	// shifting the following Tasks later. Reports ErrTaskNotFound when a non-zero
+	// afterTaskID is not a live Task of the Milestone, ErrMilestoneNotFound when
+	// milestoneID names no live Milestone.
+	CreateMilestoneTaskAfter(ctx context.Context, milestoneID, afterTaskID int64, title string, dueDate *time.Time, notes string) (Task, error)
 	// ListMilestoneTasks returns a Milestone's Tasks in Milestone order.
 	ListMilestoneTasks(ctx context.Context, milestoneID int64) ([]Task, error)
 
@@ -70,6 +81,11 @@ type Store interface {
 	// the existing entries, in the shared Task/Milestone position space) and
 	// returns it as stored.
 	CreateMilestone(ctx context.Context, projectID int64, name string) (Milestone, error)
+	// CreateMilestoneAfter inserts a Milestone one place after the body slot
+	// `after` holds (a zero after inserts at the front), shifting the following
+	// slots later. Reports the anchor kind's not-found sentinel when a non-zero
+	// `after` names no live body slot of the Project.
+	CreateMilestoneAfter(ctx context.Context, projectID int64, after BodyRef, name string) (Milestone, error)
 	// GetMilestone reads one live Milestone by id, reporting
 	// ErrMilestoneNotFound when it is missing or archived.
 	GetMilestone(ctx context.Context, id int64) (Milestone, error)
