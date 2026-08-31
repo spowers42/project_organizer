@@ -7,17 +7,19 @@ import (
 	"time"
 )
 
-// Task is a single actionable step sitting directly in a Project's ordered body
-// (a "loose" Task). It carries an optional due date and a completion flag. Its
-// position in the body is not exposed — it only feeds Next step resolution.
-// Tasks inside a Milestone arrive in a later ticket.
+// Task is a single actionable step. It sits either directly in a Project's
+// ordered body (a "loose" Task, MilestoneID nil) or inside a Milestone
+// (MilestoneID set). It carries an optional due date and a completion flag. Its
+// position is not exposed — it only feeds Next step resolution: loose Tasks
+// order within the Project body, Milestone Tasks within their Milestone.
 type Task struct {
-	ID        int64
-	ProjectID int64
-	Title     string
-	DueDate   *time.Time
-	Notes     string
-	Done      bool
+	ID          int64
+	ProjectID   int64
+	MilestoneID *int64
+	Title       string
+	DueDate     *time.Time
+	Notes       string
+	Done        bool
 }
 
 // TaskInput carries the user-supplied fields for adding or editing a Task. The
@@ -100,25 +102,36 @@ func (c *Core) MoveTask(ctx context.Context, id int64, dir MoveDir) ([]BodyEntry
 	return c.moveBodyEntry(ctx, task.ProjectID, BodyRef{Kind: TaskEntry, ID: id}, dir)
 }
 
-// NextStep resolves the single Task a Project is waiting on right now: walking
-// the body in order, the first incomplete loose Task. ok is false when every
-// loose Task is done, or the Project has none. ErrProjectNotFound if id does
-// not name a live Project. Milestone bodies are not consulted yet.
+// NextStep resolves the single Task a Project is waiting on right now. It walks
+// the Project body in order to the first incomplete entry: a not-done loose Task
+// is the Next step; a Milestone yields its first incomplete Task (in Milestone
+// order); a Milestone with no incomplete Task — empty or all done — is skipped.
+// ok is false when the body is exhausted with nothing incomplete.
+// ErrProjectNotFound if projectID does not name a live Project.
 func (c *Core) NextStep(ctx context.Context, projectID int64) (Task, bool, error) {
-	tasks, err := c.ProjectTasks(ctx, projectID)
+	body, err := c.ProjectBody(ctx, projectID)
 	if err != nil {
 		return Task{}, false, err
 	}
-	for _, t := range tasks {
-		if !t.Done {
-			return t, true, nil
+	for _, e := range body {
+		if e.Kind == TaskEntry {
+			if !e.Task.Done {
+				return *e.Task, true, nil
+			}
+			continue
+		}
+		for _, mt := range e.Milestone.Tasks {
+			if !mt.Done {
+				return mt, true, nil
+			}
 		}
 	}
 	return Task{}, false, nil
 }
 
 // ActiveProjectNextStep pairs an Active Project with its resolved Next step.
-// NextStep is nil when the Project has no incomplete loose Task.
+// NextStep is nil when nothing in the Project body is incomplete — no open loose
+// Task and no Milestone with an open Task.
 type ActiveProjectNextStep struct {
 	Project  Project
 	NextStep *Task

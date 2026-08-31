@@ -36,14 +36,14 @@ func bodyTitles(t *testing.T, c *core.Core, projectID int64) []string {
 // selectedBodyLabel is the title (Task) or name (Milestone) of the Project
 // view's currently selected body entry, or "" when nothing is selected.
 func selectedBodyLabel(v *projectViewModel) string {
-	if v.bodySel < 0 || v.bodySel >= len(v.body) {
+	if v.bodySel < 0 || v.bodySel >= len(v.rows) {
 		return ""
 	}
-	e := v.body[v.bodySel]
-	if e.Kind == core.MilestoneEntry {
-		return e.Milestone.Name
+	r := v.rows[v.bodySel]
+	if r.kind == milestoneHeadRow {
+		return r.milestone.Name
 	}
-	return e.Task.Title
+	return r.task.Title
 }
 
 // shift+down on the selected Task reorders the stored body and keeps the

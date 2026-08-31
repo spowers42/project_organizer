@@ -11,20 +11,25 @@ import (
 )
 
 // taskColumns is the SELECT list for reading a core.Task.
-const taskColumns = "id, project_id, title, due_date, notes, done"
+const taskColumns = "id, project_id, milestone_id, title, due_date, notes, done"
 
 // scanTask reads one core.Task from a row-like source. Any lead targets are
 // scanned before the taskColumns fields, so callers that prepend extra columns
 // (a body listing prepends position) can reuse this.
 func scanTask(sc interface{ Scan(...any) error }, lead ...any) (core.Task, error) {
 	var (
-		t   core.Task
-		due sql.NullString
+		t         core.Task
+		milestone sql.NullInt64
+		due       sql.NullString
 	)
-	dest := append(append(make([]any, 0, len(lead)+6), lead...),
-		&t.ID, &t.ProjectID, &t.Title, &due, &t.Notes, &t.Done)
+	dest := append(append(make([]any, 0, len(lead)+7), lead...),
+		&t.ID, &t.ProjectID, &milestone, &t.Title, &due, &t.Notes, &t.Done)
 	if err := sc.Scan(dest...); err != nil {
 		return core.Task{}, err
+	}
+	if milestone.Valid {
+		id := milestone.Int64
+		t.MilestoneID = &id
 	}
 	if due.Valid {
 		parsed, err := time.Parse(time.RFC3339Nano, due.String)
@@ -45,8 +50,8 @@ func formatDue(due *time.Time) any {
 }
 
 // CreateTask appends a loose Task to a Project's body: its position is one past
-// the current maximum body slot — across the Project's live Tasks and
-// Milestones, which share one position space (ADR 0001).
+// the current maximum body slot — across the Project's live loose Tasks and
+// Milestones, which share one position space (ADR 0001). milestone_id stays NULL.
 func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
 	nextPos, err := s.nextBodyPosition(ctx, projectID)
 	if err != nil {
@@ -63,6 +68,46 @@ func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, d
 	id, err := res.LastInsertId()
 	if err != nil {
 		return core.Task{}, fmt.Errorf("creating task: %w", err)
+	}
+	return s.GetTask(ctx, id)
+}
+
+// CreateMilestoneTask appends a Task to a Milestone's own ordered list: its
+// position is one past the current maximum among that Milestone's live Tasks,
+// independent of the Project-body positions. The Task inherits the Milestone's
+// project_id. A milestoneID naming no live Milestone is core.ErrMilestoneNotFound.
+func (s *Store) CreateMilestoneTask(ctx context.Context, milestoneID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
+	var (
+		projectID int64
+		nextPos   int64
+	)
+	err := s.db.QueryRowContext(ctx,
+		"SELECT project_id FROM milestones WHERE id = ? AND archived_at IS NULL", milestoneID,
+	).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.Task{}, core.ErrMilestoneNotFound
+	}
+	if err != nil {
+		return core.Task{}, fmt.Errorf("reading milestone %d: %w", milestoneID, err)
+	}
+
+	err = s.db.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE milestone_id = ? AND archived_at IS NULL", milestoneID,
+	).Scan(&nextPos)
+	if err != nil {
+		return core.Task{}, fmt.Errorf("finding next task position in milestone %d: %w", milestoneID, err)
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		"INSERT INTO tasks (project_id, milestone_id, title, due_date, notes, done, position) VALUES (?, ?, ?, ?, ?, 0, ?)",
+		projectID, milestoneID, title, formatDue(dueDate), notes, nextPos,
+	)
+	if err != nil {
+		return core.Task{}, fmt.Errorf("creating milestone task: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return core.Task{}, fmt.Errorf("creating milestone task: %w", err)
 	}
 	return s.GetTask(ctx, id)
 }
@@ -114,15 +159,34 @@ func (s *Store) GetTask(ctx context.Context, id int64) (core.Task, error) {
 	return t, nil
 }
 
-// ListProjectTasks returns a Project's live loose Tasks in body order (by
-// ascending position, then id to break ties deterministically).
+// ListProjectTasks returns a Project's live loose Tasks — those not inside a
+// Milestone — in body order (by ascending position, then id to break ties
+// deterministically).
 func (s *Store) ListProjectTasks(ctx context.Context, projectID int64) ([]core.Task, error) {
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT "+taskColumns+" FROM tasks WHERE project_id = ? AND archived_at IS NULL ORDER BY position, id",
+	return s.queryTasks(ctx,
+		"SELECT "+taskColumns+" FROM tasks WHERE project_id = ? AND milestone_id IS NULL AND archived_at IS NULL ORDER BY position, id",
+		fmt.Sprintf("listing tasks for project %d", projectID),
 		projectID,
 	)
+}
+
+// ListMilestoneTasks returns a Milestone's live Tasks in Milestone order (by
+// ascending position, then id). The Milestone is assumed to exist; core checks
+// that first.
+func (s *Store) ListMilestoneTasks(ctx context.Context, milestoneID int64) ([]core.Task, error) {
+	return s.queryTasks(ctx,
+		"SELECT "+taskColumns+" FROM tasks WHERE milestone_id = ? AND archived_at IS NULL ORDER BY position, id",
+		fmt.Sprintf("listing tasks for milestone %d", milestoneID),
+		milestoneID,
+	)
+}
+
+// queryTasks runs a task SELECT and scans every row into a core.Task slice.
+// what labels the operation for wrapped errors.
+func (s *Store) queryTasks(ctx context.Context, query, what string, args ...any) ([]core.Task, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("listing tasks for project %d: %w", projectID, err)
+		return nil, fmt.Errorf("%s: %w", what, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -135,7 +199,7 @@ func (s *Store) ListProjectTasks(ctx context.Context, projectID int64) ([]core.T
 		tasks = append(tasks, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing tasks for project %d: %w", projectID, err)
+		return nil, fmt.Errorf("%s: %w", what, err)
 	}
 	return tasks, nil
 }

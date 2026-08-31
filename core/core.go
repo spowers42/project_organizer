@@ -56,8 +56,15 @@ type Store interface {
 	// GetTask reads one live Task by id, reporting ErrTaskNotFound when it is
 	// missing or archived.
 	GetTask(ctx context.Context, id int64) (Task, error)
-	// ListProjectTasks returns a Project's loose Tasks in body order.
+	// ListProjectTasks returns a Project's loose Tasks — those not inside a
+	// Milestone — in body order.
 	ListProjectTasks(ctx context.Context, projectID int64) ([]Task, error)
+	// CreateMilestoneTask appends a Task to a Milestone's own ordered list
+	// (position after that Milestone's existing Tasks) and returns it as stored.
+	// Reports ErrMilestoneNotFound when milestoneID names no live Milestone.
+	CreateMilestoneTask(ctx context.Context, milestoneID int64, title string, dueDate *time.Time, notes string) (Task, error)
+	// ListMilestoneTasks returns a Milestone's Tasks in Milestone order.
+	ListMilestoneTasks(ctx context.Context, milestoneID int64) ([]Task, error)
 
 	// CreateMilestone appends a Milestone to a Project's body (position after
 	// the existing entries, in the shared Task/Milestone position space) and
@@ -67,12 +74,15 @@ type Store interface {
 	// ErrMilestoneNotFound when it is missing or archived.
 	GetMilestone(ctx context.Context, id int64) (Milestone, error)
 	// ListProjectBody returns a Project's ordered body — its loose Tasks and
-	// Milestones interleaved by stored position.
+	// Milestones interleaved by stored position. Each Milestone entry carries
+	// its own ordered Tasks.
 	ListProjectBody(ctx context.Context, projectID int64) ([]BodyEntry, error)
-	// SwapBodyPositions exchanges the body positions of two live slots in one
-	// transaction. Each slot is a loose Task or a Milestone, named by a BodyRef;
-	// a missing row is ErrTaskNotFound or ErrMilestoneNotFound and rolls the
-	// swap back.
+	// SwapBodyPositions exchanges the stored position of two live rows in one
+	// transaction, each named by a BodyRef (its kind picking the table). It is
+	// the reorder primitive for both ordering scopes — the Project body (loose
+	// Tasks and Milestones) and a Milestone's own Tasks — since a position swap
+	// by id is scope-agnostic. A missing row is ErrTaskNotFound or
+	// ErrMilestoneNotFound and rolls the swap back.
 	SwapBodyPositions(ctx context.Context, a, b BodyRef) error
 }
 
