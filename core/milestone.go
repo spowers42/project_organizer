@@ -77,7 +77,7 @@ func (c *Core) MilestoneTasks(ctx context.Context, milestoneID int64) ([]Task, e
 }
 
 // MoveMilestoneTask reorders a Task one slot earlier (MoveUp) or later
-// (MoveDown) within its Milestone, swapping positions with its neighbour there.
+// (MoveDown) within its Milestone, swapping positions with its neighbor there.
 // Moving the first Task up or the last Task down is a no-op. It returns the
 // Milestone's Tasks in the resulting order. ErrInvalidMove if dir is neither
 // direction; ErrTaskNotFound if id does not name a live Task inside a Milestone.
@@ -100,7 +100,7 @@ func (c *Core) MoveMilestoneTask(ctx context.Context, id int64, dir MoveDir) ([]
 	for i, t := range tasks {
 		refs[i] = BodyRef{Kind: TaskEntry, ID: t.ID}
 	}
-	moved, err := c.swapWithNeighbour(ctx, refs, BodyRef{Kind: TaskEntry, ID: id}, dir)
+	moved, err := c.swapWithNeighbor(ctx, refs, BodyRef{Kind: TaskEntry, ID: id}, dir)
 	if err != nil {
 		return nil, err
 	}

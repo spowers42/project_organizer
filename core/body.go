@@ -69,7 +69,7 @@ func (c *Core) moveBodyEntry(ctx context.Context, projectID int64, ref BodyRef, 
 	if err != nil {
 		return nil, err
 	}
-	moved, err := c.swapWithNeighbour(ctx, bodyRefs(body), ref, dir)
+	moved, err := c.swapWithNeighbor(ctx, bodyRefs(body), ref, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (c *Core) moveBodyEntry(ctx context.Context, projectID int64, ref BodyRef, 
 	return c.store.ListProjectBody(ctx, projectID)
 }
 
-// bodyRefs is the ordered slot refs of a body, the shape swapWithNeighbour walks.
+// bodyRefs is the ordered slot refs of a body, the shape swapWithNeighbor walks.
 func bodyRefs(body []BodyEntry) []BodyRef {
 	refs := make([]BodyRef, len(body))
 	for i, e := range body {
@@ -88,13 +88,13 @@ func bodyRefs(body []BodyEntry) []BodyRef {
 	return refs
 }
 
-// swapWithNeighbour exchanges target's stored position with that of the slot one
+// swapWithNeighbor exchanges target's stored position with that of the slot one
 // step in dir within the ordered refs, and reports whether a swap happened — a
 // move past either edge is a no-op. It is the shared reorder primitive for both
 // ordering scopes: the Project body (moveBodyEntry) and a Milestone's own Tasks
 // (MoveMilestoneTask). A target absent from refs is its kind's not-found
 // sentinel.
-func (c *Core) swapWithNeighbour(ctx context.Context, refs []BodyRef, target BodyRef, dir MoveDir) (bool, error) {
+func (c *Core) swapWithNeighbor(ctx context.Context, refs []BodyRef, target BodyRef, dir MoveDir) (bool, error) {
 	idx := -1
 	for i, r := range refs {
 		if r == target {
@@ -105,14 +105,14 @@ func (c *Core) swapWithNeighbour(ctx context.Context, refs []BodyRef, target Bod
 	if idx == -1 {
 		return false, notFoundFor(target.Kind)
 	}
-	neighbour := idx - 1
+	neighbor := idx - 1
 	if dir == MoveDown {
-		neighbour = idx + 1
+		neighbor = idx + 1
 	}
-	if neighbour < 0 || neighbour >= len(refs) {
+	if neighbor < 0 || neighbor >= len(refs) {
 		return false, nil
 	}
-	if err := c.store.SwapBodyPositions(ctx, target, refs[neighbour]); err != nil {
+	if err := c.store.SwapBodyPositions(ctx, target, refs[neighbor]); err != nil {
 		return false, err
 	}
 	return true, nil
