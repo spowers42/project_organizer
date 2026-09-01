@@ -34,7 +34,7 @@ func (s *Store) nextBodyPosition(ctx context.Context, projectID int64) (int64, e
 	var next int64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(position), -1) + 1 FROM (
-			SELECT position FROM tasks      WHERE project_id = ? AND archived_at IS NULL
+			SELECT position FROM tasks      WHERE project_id = ? AND milestone_id IS NULL AND archived_at IS NULL
 			UNION ALL
 			SELECT position FROM milestones WHERE project_id = ? AND archived_at IS NULL
 		)`,
@@ -44,6 +44,26 @@ func (s *Store) nextBodyPosition(ctx context.Context, projectID int64) (int64, e
 		return 0, fmt.Errorf("finding next body position for project %d: %w", projectID, err)
 	}
 	return next, nil
+}
+
+// shiftBodyPositions moves every live body slot of a Project at or after fromPos
+// one place later, across both loose Tasks and Milestones (they share the
+// position space), opening fromPos for an insert. Runs inside the caller's
+// transaction.
+func shiftBodyPositions(ctx context.Context, tx *sql.Tx, projectID, fromPos int64) error {
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET position = position + 1 WHERE project_id = ? AND milestone_id IS NULL AND archived_at IS NULL AND position >= ?",
+		projectID, fromPos,
+	); err != nil {
+		return fmt.Errorf("shifting task positions for project %d: %w", projectID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE milestones SET position = position + 1 WHERE project_id = ? AND archived_at IS NULL AND position >= ?",
+		projectID, fromPos,
+	); err != nil {
+		return fmt.Errorf("shifting milestone positions for project %d: %w", projectID, err)
+	}
+	return nil
 }
 
 // positionedEntry pairs a body entry with its stored position, the key
@@ -67,6 +87,16 @@ func (s *Store) ListProjectBody(ctx context.Context, projectID int64) ([]core.Bo
 	if err != nil {
 		return nil, err
 	}
+	// Attach each Milestone's own ordered Tasks so the body carries the whole
+	// nested structure. Done here, once the listing queries above have closed
+	// their rows, so these follow-up reads get the single connection.
+	for _, pe := range milestones {
+		mTasks, err := s.ListMilestoneTasks(ctx, pe.entry.Milestone.ID)
+		if err != nil {
+			return nil, err
+		}
+		pe.entry.Milestone.Tasks = mTasks
+	}
 
 	merged := append(tasks, milestones...)
 	sort.SliceStable(merged, func(i, j int) bool {
@@ -87,10 +117,11 @@ func (s *Store) ListProjectBody(ctx context.Context, projectID int64) ([]core.Bo
 	return body, nil
 }
 
-// listBodyTasks reads a Project's live loose Tasks as positioned body entries.
+// listBodyTasks reads a Project's live loose Tasks — those not inside a
+// Milestone — as positioned body entries.
 func (s *Store) listBodyTasks(ctx context.Context, projectID int64) ([]positionedEntry, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT position, "+taskColumns+" FROM tasks WHERE project_id = ? AND archived_at IS NULL",
+		"SELECT position, "+taskColumns+" FROM tasks WHERE project_id = ? AND milestone_id IS NULL AND archived_at IS NULL",
 		projectID,
 	)
 	if err != nil {
@@ -148,10 +179,12 @@ func (s *Store) listBodyMilestones(ctx context.Context, projectID int64) ([]posi
 	return out, nil
 }
 
-// SwapBodyPositions exchanges the positions of two live body slots in a single
-// transaction, so a reorder never leaves the body with a duplicated or skipped
-// position. Each slot is a loose Task or a Milestone; either one matching no
-// live row is its kind's not-found sentinel and rolls the swap back.
+// SwapBodyPositions exchanges the stored position of two live rows in a single
+// transaction, so a reorder never leaves a scope with a duplicated or skipped
+// position. Each row is named by a BodyRef whose kind picks the table (tasks or
+// milestones); the swap is a blind by-id position exchange, used for both the
+// Project body and a Milestone's own Tasks. Either ref matching no live row is
+// its kind's not-found sentinel and rolls the swap back.
 func (s *Store) SwapBodyPositions(ctx context.Context, a, b core.BodyRef) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

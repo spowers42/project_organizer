@@ -69,27 +69,53 @@ func (c *Core) moveBodyEntry(ctx context.Context, projectID int64, ref BodyRef, 
 	if err != nil {
 		return nil, err
 	}
-	idx := -1
+	moved, err := c.swapWithNeighbor(ctx, bodyRefs(body), ref, dir)
+	if err != nil {
+		return nil, err
+	}
+	if !moved {
+		return body, nil // already at the edge; nothing to reorder
+	}
+	return c.store.ListProjectBody(ctx, projectID)
+}
+
+// bodyRefs is the ordered slot refs of a body, the shape swapWithNeighbor walks.
+func bodyRefs(body []BodyEntry) []BodyRef {
+	refs := make([]BodyRef, len(body))
 	for i, e := range body {
-		if e.Ref() == ref {
+		refs[i] = e.Ref()
+	}
+	return refs
+}
+
+// swapWithNeighbor exchanges target's stored position with that of the slot one
+// step in dir within the ordered refs, and reports whether a swap happened — a
+// move past either edge is a no-op. It is the shared reorder primitive for both
+// ordering scopes: the Project body (moveBodyEntry) and a Milestone's own Tasks
+// (MoveMilestoneTask). A target absent from refs is its kind's not-found
+// sentinel.
+func (c *Core) swapWithNeighbor(ctx context.Context, refs []BodyRef, target BodyRef, dir MoveDir) (bool, error) {
+	idx := -1
+	for i, r := range refs {
+		if r == target {
 			idx = i
 			break
 		}
 	}
 	if idx == -1 {
-		return nil, notFoundFor(ref.Kind)
+		return false, notFoundFor(target.Kind)
 	}
 	neighbor := idx - 1
 	if dir == MoveDown {
 		neighbor = idx + 1
 	}
-	if neighbor < 0 || neighbor >= len(body) {
-		return body, nil // already at the edge; nothing to reorder
+	if neighbor < 0 || neighbor >= len(refs) {
+		return false, nil
 	}
-	if err := c.store.SwapBodyPositions(ctx, ref, body[neighbor].Ref()); err != nil {
-		return nil, err
+	if err := c.store.SwapBodyPositions(ctx, target, refs[neighbor]); err != nil {
+		return false, err
 	}
-	return c.store.ListProjectBody(ctx, projectID)
+	return true, nil
 }
 
 // notFoundFor is the sentinel for a body slot of the given kind that turned up
