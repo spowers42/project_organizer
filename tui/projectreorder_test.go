@@ -36,10 +36,10 @@ func bodyTitles(t *testing.T, c *core.Core, projectID int64) []string {
 // selectedBodyLabel is the title (Task) or name (Milestone) of the Project
 // view's currently selected body entry, or "" when nothing is selected.
 func selectedBodyLabel(v *projectViewModel) string {
-	if v.bodySel < 0 || v.bodySel >= len(v.rows) {
+	r, ok := v.body.selectedRow()
+	if !ok {
 		return ""
 	}
-	r := v.rows[v.bodySel]
 	if r.kind == milestoneHeadRow {
 		return r.milestone.Name
 	}
@@ -104,8 +104,8 @@ func TestProjectViewMoveTaskUpAtTopEdgeIsNoOp(t *testing.T) {
 	if got := bodyTitles(t, c, p.ID); !slices.Equal(got, []string{"alpha", "beta"}) {
 		t.Errorf("body = %v, want it unchanged at the top edge", got)
 	}
-	if v.bodySel != 0 {
-		t.Errorf("bodySel = %d, want 0", v.bodySel)
+	if v.body.sel != 0 {
+		t.Errorf("body.sel = %d, want 0", v.body.sel)
 	}
 }
 

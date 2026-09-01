@@ -25,9 +25,10 @@ func scanMilestone(sc interface{ Scan(...any) error }, lead ...any) (core.Milest
 	return m, nil
 }
 
-// CreateMilestone appends a Milestone to a Project's body: its position is one
+// InsertMilestone appends a Milestone to a Project's body: its position is one
 // past the current maximum body slot, shared with the Project's loose Tasks.
-func (s *Store) CreateMilestone(ctx context.Context, projectID int64, name string) (core.Milestone, error) {
+// Placement at a chosen spot is a separate WriteBodyOrder call.
+func (s *Store) InsertMilestone(ctx context.Context, projectID int64, name string) (core.Milestone, error) {
 	nextPos, err := s.nextBodyPosition(ctx, projectID)
 	if err != nil {
 		return core.Milestone{}, err
@@ -45,67 +46,6 @@ func (s *Store) CreateMilestone(ctx context.Context, projectID int64, name strin
 		return core.Milestone{}, fmt.Errorf("creating milestone: %w", err)
 	}
 	return s.GetMilestone(ctx, id)
-}
-
-// CreateMilestoneAfter inserts a Milestone into a Project's body one place after
-// the slot `after` currently holds, shifting that following slot and every later
-// one — loose Tasks and Milestones alike, since they share the position space
-// (ADR 0001) — a place later. A zero after inserts at the front of the body. A
-// non-zero after must name a live body slot of the Project; otherwise its kind's
-// not-found sentinel.
-func (s *Store) CreateMilestoneAfter(ctx context.Context, projectID int64, after core.BodyRef, name string) (core.Milestone, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return core.Milestone{}, fmt.Errorf("inserting milestone: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var insertPos int64
-	if after.ID != 0 {
-		pos, err := anchorBodyPosition(ctx, tx, projectID, after)
-		if err != nil {
-			return core.Milestone{}, err
-		}
-		insertPos = pos + 1
-	}
-
-	if err := shiftBodyPositions(ctx, tx, projectID, insertPos); err != nil {
-		return core.Milestone{}, err
-	}
-	res, err := tx.ExecContext(ctx,
-		"INSERT INTO milestones (project_id, name, position) VALUES (?, ?, ?)",
-		projectID, name, insertPos,
-	)
-	if err != nil {
-		return core.Milestone{}, fmt.Errorf("inserting milestone: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return core.Milestone{}, fmt.Errorf("inserting milestone: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return core.Milestone{}, fmt.Errorf("inserting milestone: %w", err)
-	}
-	return s.GetMilestone(ctx, id)
-}
-
-// anchorBodyPosition reads the position of a live body slot of a Project — a
-// loose Task or a Milestone, per ref.Kind — inside the caller's transaction,
-// mapping a missing row to the kind's not-found sentinel.
-func anchorBodyPosition(ctx context.Context, tx *sql.Tx, projectID int64, ref core.BodyRef) (int64, error) {
-	query := "SELECT position FROM milestones WHERE id = ? AND project_id = ? AND archived_at IS NULL"
-	if ref.Kind == core.TaskEntry {
-		query = "SELECT position FROM tasks WHERE id = ? AND project_id = ? AND milestone_id IS NULL AND archived_at IS NULL"
-	}
-	var pos int64
-	err := tx.QueryRowContext(ctx, query, ref.ID, projectID).Scan(&pos)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, notFoundErr(ref.Kind)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("reading %s %d position: %w", bodyTable(ref.Kind), ref.ID, err)
-	}
-	return pos, nil
 }
 
 // GetMilestone reads one live Milestone by id.

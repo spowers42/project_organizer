@@ -39,7 +39,7 @@ func (c *Core) AddMilestone(ctx context.Context, projectID int64, name string) (
 	if trimmed == "" {
 		return Milestone{}, ErrEmptyMilestoneName
 	}
-	return c.store.CreateMilestone(ctx, projectID, trimmed)
+	return c.store.InsertMilestone(ctx, projectID, trimmed)
 }
 
 // AddMilestoneAfter inserts a Milestone into a Project's body one place after the
@@ -49,24 +49,36 @@ func (c *Core) AddMilestone(ctx context.Context, projectID int64, name string) (
 // Project; ErrTaskNotFound / ErrMilestoneNotFound if a non-zero `after` names no
 // live body slot of the Project.
 func (c *Core) AddMilestoneAfter(ctx context.Context, projectID int64, after BodyRef, name string) (Milestone, error) {
-	if _, err := c.store.GetProject(ctx, projectID); err != nil {
+	body, err := c.loadBody(ctx, projectID)
+	if err != nil {
 		return Milestone{}, err
 	}
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return Milestone{}, ErrEmptyMilestoneName
 	}
-	return c.store.CreateMilestoneAfter(ctx, projectID, after, trimmed)
+	if after.ID != 0 && body.indexOfSlot(after) == -1 {
+		return Milestone{}, notFoundFor(after.Kind) // stale cursor anchor; add nothing
+	}
+	m, err := c.store.InsertMilestone(ctx, projectID, trimmed)
+	if err != nil {
+		return Milestone{}, err
+	}
+	if err := c.placeAfterInsert(ctx, projectID, BodyRef{Kind: MilestoneEntry, ID: m.ID}, after); err != nil {
+		return Milestone{}, err
+	}
+	return m, nil
 }
 
 // ProjectBody returns a Project's ordered body: its loose Tasks and Milestones
 // interleaved in stored order. ErrProjectNotFound if projectID does not name a
 // live Project.
 func (c *Core) ProjectBody(ctx context.Context, projectID int64) ([]BodyEntry, error) {
-	if _, err := c.store.GetProject(ctx, projectID); err != nil {
+	body, err := c.loadBody(ctx, projectID)
+	if err != nil {
 		return nil, err
 	}
-	return c.store.ListProjectBody(ctx, projectID)
+	return body.Tree(), nil
 }
 
 // AddMilestoneTask appends a Task to a Milestone's own ordered list. The title
@@ -81,7 +93,7 @@ func (c *Core) AddMilestoneTask(ctx context.Context, milestoneID int64, in TaskI
 	if err != nil {
 		return Task{}, err
 	}
-	return c.store.CreateMilestoneTask(ctx, milestoneID, title, in.DueDate, in.Notes)
+	return c.store.InsertMilestoneTask(ctx, milestoneID, title, in.DueDate, in.Notes)
 }
 
 // AddMilestoneTaskAfter inserts a Task into a Milestone's ordered list one place
@@ -91,23 +103,64 @@ func (c *Core) AddMilestoneTask(ctx context.Context, milestoneID int64, in TaskI
 // live Milestone; ErrTaskNotFound if a non-zero afterTaskID is not one of its
 // Tasks.
 func (c *Core) AddMilestoneTaskAfter(ctx context.Context, milestoneID, afterTaskID int64, in TaskInput) (Task, error) {
-	if _, err := c.store.GetMilestone(ctx, milestoneID); err != nil {
+	m, err := c.store.GetMilestone(ctx, milestoneID)
+	if err != nil {
 		return Task{}, err
 	}
 	title, err := validateTaskInput(in)
 	if err != nil {
 		return Task{}, err
 	}
-	return c.store.CreateMilestoneTaskAfter(ctx, milestoneID, afterTaskID, title, in.DueDate, in.Notes)
+	body, err := c.loadBody(ctx, m.ProjectID)
+	if err != nil {
+		return Task{}, err
+	}
+	tasks, err := body.MilestoneTasks(milestoneID)
+	if err != nil {
+		return Task{}, err
+	}
+	if afterTaskID != 0 && !containsTaskID(tasks, afterTaskID) {
+		return Task{}, ErrTaskNotFound // stale cursor anchor; add nothing
+	}
+	t, err := c.store.InsertMilestoneTask(ctx, milestoneID, title, in.DueDate, in.Notes)
+	if err != nil {
+		return Task{}, err
+	}
+	fresh, err := c.loadBody(ctx, m.ProjectID)
+	if err != nil {
+		return Task{}, err
+	}
+	if err := fresh.PlaceMilestoneTaskAfter(milestoneID, t.ID, afterTaskID); err != nil {
+		return Task{}, err
+	}
+	if err := c.store.WriteBodyOrder(ctx, m.ProjectID, fresh.Order()); err != nil {
+		return Task{}, err
+	}
+	return t, nil
+}
+
+// containsTaskID reports whether tasks holds a Task with id.
+func containsTaskID(tasks []Task, id int64) bool {
+	for _, t := range tasks {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // MilestoneTasks returns a Milestone's Tasks in Milestone order.
 // ErrMilestoneNotFound if milestoneID does not name a live Milestone.
 func (c *Core) MilestoneTasks(ctx context.Context, milestoneID int64) ([]Task, error) {
-	if _, err := c.store.GetMilestone(ctx, milestoneID); err != nil {
+	m, err := c.store.GetMilestone(ctx, milestoneID)
+	if err != nil {
 		return nil, err
 	}
-	return c.store.ListMilestoneTasks(ctx, milestoneID)
+	body, err := c.loadBody(ctx, m.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return body.MilestoneTasks(milestoneID)
 }
 
 // MoveMilestoneTask reorders a Task one slot earlier (MoveUp) or later
@@ -116,9 +169,6 @@ func (c *Core) MilestoneTasks(ctx context.Context, milestoneID int64) ([]Task, e
 // Milestone's Tasks in the resulting order. ErrInvalidMove if dir is neither
 // direction; ErrTaskNotFound if id does not name a live Task inside a Milestone.
 func (c *Core) MoveMilestoneTask(ctx context.Context, id int64, dir MoveDir) ([]Task, error) {
-	if dir != MoveUp && dir != MoveDown {
-		return nil, ErrInvalidMove
-	}
 	task, err := c.store.GetTask(ctx, id)
 	if err != nil {
 		return nil, err
@@ -126,22 +176,20 @@ func (c *Core) MoveMilestoneTask(ctx context.Context, id int64, dir MoveDir) ([]
 	if task.MilestoneID == nil {
 		return nil, ErrTaskNotFound // a loose Task has no Milestone scope to move in
 	}
-	tasks, err := c.store.ListMilestoneTasks(ctx, *task.MilestoneID)
+	body, err := c.loadBody(ctx, task.ProjectID)
 	if err != nil {
 		return nil, err
 	}
-	refs := make([]BodyRef, len(tasks))
-	for i, t := range tasks {
-		refs[i] = BodyRef{Kind: TaskEntry, ID: t.ID}
-	}
-	moved, err := c.swapWithNeighbor(ctx, refs, BodyRef{Kind: TaskEntry, ID: id}, dir)
+	moved, err := body.MoveMilestoneTask(id, dir)
 	if err != nil {
 		return nil, err
 	}
-	if !moved {
-		return tasks, nil // already at the edge; nothing to reorder
+	if moved {
+		if err := c.store.WriteBodyOrder(ctx, task.ProjectID, body.Order()); err != nil {
+			return nil, err
+		}
 	}
-	return c.store.ListMilestoneTasks(ctx, *task.MilestoneID)
+	return body.MilestoneTasks(*task.MilestoneID)
 }
 
 // MoveMilestone reorders a Milestone one slot earlier (MoveUp) or later
@@ -151,12 +199,11 @@ func (c *Core) MoveMilestoneTask(ctx context.Context, id int64, dir MoveDir) ([]
 // the resulting order. ErrInvalidMove if dir is neither direction;
 // ErrMilestoneNotFound if id does not name a live Milestone.
 func (c *Core) MoveMilestone(ctx context.Context, id int64, dir MoveDir) ([]BodyEntry, error) {
-	if dir != MoveUp && dir != MoveDown {
-		return nil, ErrInvalidMove
-	}
 	m, err := c.store.GetMilestone(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return c.moveBodyEntry(ctx, m.ProjectID, BodyRef{Kind: MilestoneEntry, ID: id}, dir)
+	return c.reorderBody(ctx, m.ProjectID, func(b *Body) (bool, error) {
+		return b.MoveSlot(BodyRef{Kind: MilestoneEntry, ID: id}, dir)
+	})
 }
