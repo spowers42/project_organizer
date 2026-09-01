@@ -51,7 +51,7 @@ func (c *Core) AddTask(ctx context.Context, projectID int64, in TaskInput) (Task
 	if err != nil {
 		return Task{}, err
 	}
-	return c.store.CreateTask(ctx, projectID, title, in.DueDate, in.Notes)
+	return c.store.InsertLooseTask(ctx, projectID, title, in.DueDate, in.Notes)
 }
 
 // AddTaskAfter inserts a loose Task into a Project's body one place after the
@@ -60,14 +60,26 @@ func (c *Core) AddTask(ctx context.Context, projectID int64, in TaskInput) (Task
 // AddTask. ErrProjectNotFound if projectID names no live Project; ErrTaskNotFound
 // if a non-zero afterTaskID is not one of its loose Tasks.
 func (c *Core) AddTaskAfter(ctx context.Context, projectID, afterTaskID int64, in TaskInput) (Task, error) {
-	if _, err := c.store.GetProject(ctx, projectID); err != nil {
-		return Task{}, err
-	}
 	title, err := validateTaskInput(in)
 	if err != nil {
 		return Task{}, err
 	}
-	return c.store.CreateTaskAfter(ctx, projectID, afterTaskID, title, in.DueDate, in.Notes)
+	body, err := c.loadBody(ctx, projectID)
+	if err != nil {
+		return Task{}, err
+	}
+	anchor := BodyRef{Kind: TaskEntry, ID: afterTaskID}
+	if afterTaskID != 0 && body.indexOfSlot(anchor) == -1 {
+		return Task{}, ErrTaskNotFound // stale cursor anchor; add nothing
+	}
+	t, err := c.store.InsertLooseTask(ctx, projectID, title, in.DueDate, in.Notes)
+	if err != nil {
+		return Task{}, err
+	}
+	if err := c.placeAfterInsert(ctx, projectID, BodyRef{Kind: TaskEntry, ID: t.ID}, anchor); err != nil {
+		return Task{}, err
+	}
+	return t, nil
 }
 
 // EditTask rewrites a Task's title and due date. Same title validation as
@@ -94,10 +106,11 @@ func (c *Core) SetTaskDone(ctx context.Context, id int64, done bool) (Task, erro
 // ProjectTasks returns a Project's loose Tasks in body order.
 // ErrProjectNotFound if id does not name a live Project.
 func (c *Core) ProjectTasks(ctx context.Context, projectID int64) ([]Task, error) {
-	if _, err := c.store.GetProject(ctx, projectID); err != nil {
+	body, err := c.loadBody(ctx, projectID)
+	if err != nil {
 		return nil, err
 	}
-	return c.store.ListProjectTasks(ctx, projectID)
+	return body.LooseTasks(), nil
 }
 
 // MoveTask reorders a loose Task one slot earlier (MoveUp) or later (MoveDown)
@@ -108,14 +121,13 @@ func (c *Core) ProjectTasks(ctx context.Context, projectID int64) ([]Task, error
 // Project's body in the resulting order. ErrInvalidMove if dir is neither
 // direction; ErrTaskNotFound if id does not name a live Task.
 func (c *Core) MoveTask(ctx context.Context, id int64, dir MoveDir) ([]BodyEntry, error) {
-	if dir != MoveUp && dir != MoveDown {
-		return nil, ErrInvalidMove
-	}
 	task, err := c.store.GetTask(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return c.moveBodyEntry(ctx, task.ProjectID, BodyRef{Kind: TaskEntry, ID: id}, dir)
+	return c.reorderBody(ctx, task.ProjectID, func(b *Body) (bool, error) {
+		return b.MoveSlot(BodyRef{Kind: TaskEntry, ID: id}, dir)
+	})
 }
 
 // NextStep resolves the single Task a Project is waiting on right now. It walks

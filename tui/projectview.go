@@ -20,67 +20,11 @@ type projectViewModel struct {
 	projectID int64
 	project   core.Project
 	cats      []core.Category
-	body      []core.BodyEntry
-	rows      []bodyRow // body flattened for selection: entries plus Milestone Tasks
-	bodySel   int       // index into rows
-	bodyErr   error
+	body      projectBody // flattened body plus cursor and selection
 	loaded    bool
 	loadErr   error
 	status    string
 	overlay   overlayHost
-}
-
-// bodyRowKind classifies one selectable line of the Project body.
-type bodyRowKind int
-
-const (
-	looseTaskRow bodyRowKind = iota
-	milestoneHeadRow
-	milestoneTaskRow
-)
-
-// bodyRow is one selectable line of the Project body: a loose Task, a Milestone
-// header, or a Task nested inside a Milestone. Flattening the interleaved body
-// into these rows lets the user walk and reorder the whole nested structure
-// with a single selection index.
-type bodyRow struct {
-	kind        bodyRowKind
-	task        core.Task      // set for looseTaskRow and milestoneTaskRow
-	milestone   core.Milestone // set for milestoneHeadRow
-	milestoneID int64          // owning Milestone id, set for milestoneTaskRow
-}
-
-// bodyRowKey identifies a row across a body reload, so the selection can follow
-// a moved or edited entry.
-type bodyRowKey struct {
-	kind bodyRowKind
-	id   int64
-}
-
-// key is the row's stable identity: the Milestone id for a header, otherwise
-// the Task id.
-func (r bodyRow) key() bodyRowKey {
-	if r.kind == milestoneHeadRow {
-		return bodyRowKey{kind: milestoneHeadRow, id: r.milestone.ID}
-	}
-	return bodyRowKey{kind: r.kind, id: r.task.ID}
-}
-
-// flattenBody expands the interleaved body into selectable rows: each Milestone
-// header is immediately followed by its ordered Tasks.
-func flattenBody(body []core.BodyEntry) []bodyRow {
-	var rows []bodyRow
-	for _, e := range body {
-		if e.Kind == core.MilestoneEntry {
-			rows = append(rows, bodyRow{kind: milestoneHeadRow, milestone: *e.Milestone})
-			for _, mt := range e.Milestone.Tasks {
-				rows = append(rows, bodyRow{kind: milestoneTaskRow, task: mt, milestoneID: e.Milestone.ID})
-			}
-			continue
-		}
-		rows = append(rows, bodyRow{kind: looseTaskRow, task: *e.Task})
-	}
-	return rows
 }
 
 // newProjectView builds the screen bound to one Project id; Init loads it.
@@ -254,11 +198,7 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 		v.project, v.loadErr, v.loaded = msg.project, msg.err, true
 		return nil
 	case bodyLoadedMsg:
-		v.body, v.bodyErr = msg.body, msg.err
-		v.rows = flattenBody(msg.body)
-		if v.bodySel >= len(v.rows) {
-			v.bodySel = 0
-		}
+		v.body.setBody(msg.body, msg.err)
 		return nil
 	case taskSavedMsg:
 		if msg.err != nil {
@@ -275,14 +215,14 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 		}
 		v.overlay.close()
 		v.status = "Saved."
-		v.applyBody(msg.body, msg.sel)
+		v.body.apply(msg.body, msg.sel)
 		return nil
 	case bodyMovedMsg:
 		if msg.err != nil {
 			v.status = errorMessage(msg.err)
 			return nil
 		}
-		v.applyBody(msg.body, msg.sel)
+		v.body.apply(msg.body, msg.sel)
 		return nil
 	case categoriesLoadedMsg:
 		v.cats = msg.cats
@@ -324,31 +264,27 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "q":
 		return tea.Quit
 	case "up", "k":
-		if v.bodySel > 0 {
-			v.bodySel--
-		}
+		v.body.up()
 	case "down", "j":
-		if v.bodySel < len(v.rows)-1 {
-			v.bodySel++
-		}
+		v.body.down()
 	case "shift+up", "K":
-		if v.ready() && v.hasBodySelection() {
-			return v.moveRow(v.rows[v.bodySel], core.MoveUp)
+		if r, ok := v.body.selectedRow(); ok && v.ready() {
+			return v.moveRow(r, core.MoveUp)
 		}
 	case "shift+down", "J":
-		if v.ready() && v.hasBodySelection() {
-			return v.moveRow(v.rows[v.bodySel], core.MoveDown)
+		if r, ok := v.body.selectedRow(); ok && v.ready() {
+			return v.moveRow(r, core.MoveDown)
 		}
 	case "a":
 		if v.ready() {
-			target, heading := v.addTaskTargetAtCursor()
+			target, heading := v.body.insertTargetBelowCursor()
 			f := newTaskForm(heading, nil)
 			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, target) })
 			v.status = ""
 		}
 	case "m":
 		if v.ready() {
-			anchor := v.addEntryAnchorAtCursor()
+			anchor := v.body.milestoneAnchorBelowCursor()
 			f := newMilestoneForm("Add Milestone")
 			v.overlay.open(&f, func() tea.Cmd {
 				name := f.name()
@@ -359,13 +295,13 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 			v.status = ""
 		}
 	case "t":
-		if task, ok := v.selectedTask(); ok && v.ready() {
+		if task, ok := v.body.selectedTask(); ok && v.ready() {
 			f := newTaskForm("Edit Task", &task)
 			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, taskFormTarget{editID: task.ID}) })
 			v.status = ""
 		}
 	case " ":
-		if task, ok := v.selectedTask(); ok && v.ready() {
+		if task, ok := v.body.selectedTask(); ok && v.ready() {
 			return v.toggleTask(task)
 		}
 	case "e":
@@ -402,46 +338,6 @@ func (v *projectViewModel) ready() bool {
 	return v.loaded && v.loadErr == nil
 }
 
-// hasBodySelection reports whether bodySel points at a loaded row.
-func (v *projectViewModel) hasBodySelection() bool {
-	return v.bodySel >= 0 && v.bodySel < len(v.rows)
-}
-
-// selectedRow returns the currently selected row, if any.
-func (v *projectViewModel) selectedRow() (bodyRow, bool) {
-	if !v.hasBodySelection() {
-		return bodyRow{}, false
-	}
-	return v.rows[v.bodySel], true
-}
-
-// selectedTask returns the selected row as a Task when it is one — a loose Task
-// or a Task inside a Milestone. The Task-only actions (edit, toggle done) use it
-// to stay inert on a Milestone header.
-func (v *projectViewModel) selectedTask() (core.Task, bool) {
-	r, ok := v.selectedRow()
-	if !ok || r.kind == milestoneHeadRow {
-		return core.Task{}, false
-	}
-	return r.task, true
-}
-
-// applyBody swaps in a freshly loaded body and moves the selection onto the row
-// named by sel, keeping bodySel valid when that row is gone.
-func (v *projectViewModel) applyBody(body []core.BodyEntry, sel bodyRowKey) {
-	v.body, v.bodyErr = body, nil
-	v.rows = flattenBody(body)
-	for i, r := range v.rows {
-		if r.key() == sel {
-			v.bodySel = i
-			return
-		}
-	}
-	if v.bodySel >= len(v.rows) {
-		v.bodySel = 0
-	}
-}
-
 // taskFormTarget says what a submitted Task form does:
 //   - editID set: edit that Task.
 //   - milestoneID set: insert into that Milestone just after afterTaskID
@@ -452,46 +348,6 @@ type taskFormTarget struct {
 	editID      int64
 	milestoneID int64
 	afterTaskID int64
-}
-
-// addTaskTargetAtCursor decides where a new Task goes: just below the selection,
-// so "add" drops it at the cursor rather than always at the end. On a loose Task
-// it lands right after that Task; on a Milestone header it becomes the
-// Milestone's first Task; on a nested Task it lands right after that one; with no
-// selection it appends to the Project body.
-func (v *projectViewModel) addTaskTargetAtCursor() (taskFormTarget, string) {
-	r, ok := v.selectedRow()
-	if !ok {
-		return taskFormTarget{}, "Add Task"
-	}
-	switch r.kind {
-	case milestoneHeadRow:
-		return taskFormTarget{milestoneID: r.milestone.ID}, "Add Task to Milestone"
-	case milestoneTaskRow:
-		return taskFormTarget{milestoneID: r.milestoneID, afterTaskID: r.task.ID}, "Add Task to Milestone"
-	default:
-		return taskFormTarget{afterTaskID: r.task.ID}, "Add Task"
-	}
-}
-
-// addEntryAnchorAtCursor is the body slot a new Milestone should land just after
-// — the selection's place in the body. On a loose Task or a Milestone header it
-// is that entry; on a nested Task it is the enclosing Milestone (a Milestone
-// cannot nest). With no selection it is the zero BodyRef, which inserts at the
-// front.
-func (v *projectViewModel) addEntryAnchorAtCursor() core.BodyRef {
-	r, ok := v.selectedRow()
-	if !ok {
-		return core.BodyRef{}
-	}
-	switch r.kind {
-	case milestoneHeadRow:
-		return core.BodyRef{Kind: core.MilestoneEntry, ID: r.milestone.ID}
-	case milestoneTaskRow:
-		return core.BodyRef{Kind: core.MilestoneEntry, ID: r.milestoneID}
-	default:
-		return core.BodyRef{Kind: core.TaskEntry, ID: r.task.ID}
-	}
 }
 
 // submitTaskForm turns the form's fields into the core call named by target. A
@@ -541,55 +397,10 @@ func (v *projectViewModel) View() string {
 	fmt.Fprintf(&b, "Category:    %s\n", v.categoryName(p.CategoryID))
 	fmt.Fprintf(&b, "Lifecycle:   %s\n", p.Lifecycle)
 	b.WriteString("\nBody:\n")
-	b.WriteString(renderBodyRows(v.rows, v.bodySel, v.bodyErr))
+	b.WriteString(v.body.render())
 	b.WriteString(statusBlock(v.status))
 	b.WriteString("\n↑/↓: select   shift+↑/↓: reorder   space: toggle done   a: add Task   m: add Milestone   t: edit Task\n")
 	b.WriteString("e: edit Project   s: set lifecycle   d: archive   esc: back   q: quit\n")
-	return b.String()
-}
-
-// renderBodyRows lists the Project's body — loose Tasks and Milestones
-// interleaved in stored order, each Milestone's own Tasks nested beneath it —
-// with a caret against the selected row. A Task shows a completion checkbox, any
-// due date, and its notes; a Milestone shows a diamond and its name. An empty
-// body shows a hint; a load failure is surfaced, not hidden.
-func renderBodyRows(rows []bodyRow, selected int, loadErr error) string {
-	if loadErr != nil {
-		return "  Could not load the body: " + loadErr.Error() + "\n"
-	}
-	if len(rows) == 0 {
-		return "  (empty — press a to add a Task or m to add a Milestone)\n"
-	}
-	var b strings.Builder
-	for i, r := range rows {
-		marker := "  "
-		if i == selected {
-			marker = "> "
-		}
-		if r.kind == milestoneHeadRow {
-			fmt.Fprintf(&b, "%s◆ %s  (Milestone)\n", marker, r.milestone.Name)
-			continue
-		}
-		// A Task inside a Milestone is indented one step past a loose Task.
-		indent, noteIndent := "", "      "
-		if r.kind == milestoneTaskRow {
-			indent, noteIndent = "  ", "        "
-		}
-		box := "[ ]"
-		if r.task.Done {
-			box = "[x]"
-		}
-		due := ""
-		if r.task.DueDate != nil {
-			due = "  (due " + r.task.DueDate.Format(taskDueDateLayout) + ")"
-		}
-		fmt.Fprintf(&b, "%s%s%s %s%s\n", marker, indent, box, r.task.Title, due)
-		if strings.TrimSpace(r.task.Notes) != "" {
-			for _, line := range strings.Split(r.task.Notes, "\n") {
-				fmt.Fprintf(&b, "%s%s\n", noteIndent, line)
-			}
-		}
-	}
 	return b.String()
 }
 

@@ -49,10 +49,17 @@ func formatDue(due *time.Time) any {
 	return due.UTC().Format(time.RFC3339Nano)
 }
 
-// CreateTask appends a loose Task to a Project's body: its position is one past
-// the current maximum body slot — across the Project's live loose Tasks and
-// Milestones, which share one position space (ADR 0001). milestone_id stays NULL.
+// CreateTask is the pre-Body-module name for InsertLooseTask, kept while callers
+// migrate.
 func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
+	return s.InsertLooseTask(ctx, projectID, title, dueDate, notes)
+}
+
+// InsertLooseTask appends a loose Task to a Project's body: its position is one
+// past the current maximum body slot — across the Project's live loose Tasks and
+// Milestones, which share one position space (ADR 0001). milestone_id stays NULL.
+// Placement at a chosen spot is a separate WriteBodyOrder call.
+func (s *Store) InsertLooseTask(ctx context.Context, projectID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
 	nextPos, err := s.nextBodyPosition(ctx, projectID)
 	if err != nil {
 		return core.Task{}, err
@@ -72,11 +79,18 @@ func (s *Store) CreateTask(ctx context.Context, projectID int64, title string, d
 	return s.GetTask(ctx, id)
 }
 
-// CreateMilestoneTask appends a Task to a Milestone's own ordered list: its
+// CreateMilestoneTask is the pre-Body-module name for InsertMilestoneTask, kept
+// while callers migrate.
+func (s *Store) CreateMilestoneTask(ctx context.Context, milestoneID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
+	return s.InsertMilestoneTask(ctx, milestoneID, title, dueDate, notes)
+}
+
+// InsertMilestoneTask appends a Task to a Milestone's own ordered list: its
 // position is one past the current maximum among that Milestone's live Tasks,
 // independent of the Project-body positions. The Task inherits the Milestone's
 // project_id. A milestoneID naming no live Milestone is core.ErrMilestoneNotFound.
-func (s *Store) CreateMilestoneTask(ctx context.Context, milestoneID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
+// Placement at a chosen spot is a separate WriteBodyOrder call.
+func (s *Store) InsertMilestoneTask(ctx context.Context, milestoneID int64, title string, dueDate *time.Time, notes string) (core.Task, error) {
 	var (
 		projectID int64
 		nextPos   int64

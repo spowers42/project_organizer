@@ -73,12 +73,18 @@ type positionedEntry struct {
 	entry core.BodyEntry
 }
 
-// ListProjectBody returns a Project's ordered body: its live loose Tasks and
-// Milestones merged by ascending position. A Project assigns each new slot a
-// position past every existing one, so positions are distinct in practice; the
-// comparator still breaks an equal-position tie by kind then id so the order is
-// never left to chance.
+// ListProjectBody is the pre-Body-module name for ReadBody, kept while callers
+// migrate.
 func (s *Store) ListProjectBody(ctx context.Context, projectID int64) ([]core.BodyEntry, error) {
+	return s.ReadBody(ctx, projectID)
+}
+
+// ReadBody returns a Project's ordered body: its live loose Tasks and
+// Milestones merged by ascending position, each Milestone carrying its own
+// ordered Tasks. A Project assigns each new slot a position past every existing
+// one, so positions are distinct in practice; the comparator still breaks an
+// equal-position tie by kind then id so the order is never left to chance.
+func (s *Store) ReadBody(ctx context.Context, projectID int64) ([]core.BodyEntry, error) {
 	tasks, err := s.listBodyTasks(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -115,6 +121,44 @@ func (s *Store) ListProjectBody(ctx context.Context, projectID int64) ([]core.Bo
 		body[i] = m.entry
 	}
 	return body, nil
+}
+
+// WriteBodyOrder rewrites the stored order of a Project's body from an
+// in-memory ordering: each top-level slot (loose Task or Milestone) and each
+// Milestone's own Tasks are renumbered 0..N-1 to match the given sequence, in
+// one transaction. The order is expected to name exactly the Project's live
+// slots — it comes from a freshly loaded Body — so rows not mentioned are left
+// alone. It is the single persistence call for every reorder and every
+// insert-at-a-position.
+func (s *Store) WriteBodyOrder(ctx context.Context, projectID int64, order core.BodyOrder) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("writing body order for project %d: %w", projectID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for i, ref := range order.Slots {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE "+bodyTable(ref.Kind)+" SET position = ? WHERE id = ? AND project_id = ? AND archived_at IS NULL",
+			i, ref.ID, projectID,
+		); err != nil {
+			return fmt.Errorf("ordering %s %d: %w", bodyTable(ref.Kind), ref.ID, err)
+		}
+	}
+	for milestoneID, taskIDs := range order.MilestoneTasks {
+		for j, taskID := range taskIDs {
+			if _, err := tx.ExecContext(ctx,
+				"UPDATE tasks SET position = ? WHERE id = ? AND milestone_id = ? AND archived_at IS NULL",
+				j, taskID, milestoneID,
+			); err != nil {
+				return fmt.Errorf("ordering task %d in milestone %d: %w", taskID, milestoneID, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("writing body order for project %d: %w", projectID, err)
+	}
+	return nil
 }
 
 // listBodyTasks reads a Project's live loose Tasks — those not inside a

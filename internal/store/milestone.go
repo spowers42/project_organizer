@@ -25,9 +25,16 @@ func scanMilestone(sc interface{ Scan(...any) error }, lead ...any) (core.Milest
 	return m, nil
 }
 
-// CreateMilestone appends a Milestone to a Project's body: its position is one
-// past the current maximum body slot, shared with the Project's loose Tasks.
+// CreateMilestone is the pre-Body-module name for InsertMilestone, kept while
+// callers migrate.
 func (s *Store) CreateMilestone(ctx context.Context, projectID int64, name string) (core.Milestone, error) {
+	return s.InsertMilestone(ctx, projectID, name)
+}
+
+// InsertMilestone appends a Milestone to a Project's body: its position is one
+// past the current maximum body slot, shared with the Project's loose Tasks.
+// Placement at a chosen spot is a separate WriteBodyOrder call.
+func (s *Store) InsertMilestone(ctx context.Context, projectID int64, name string) (core.Milestone, error) {
 	nextPos, err := s.nextBodyPosition(ctx, projectID)
 	if err != nil {
 		return core.Milestone{}, err

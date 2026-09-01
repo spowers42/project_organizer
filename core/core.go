@@ -93,6 +93,25 @@ type Store interface {
 	// Milestones interleaved by stored position. Each Milestone entry carries
 	// its own ordered Tasks.
 	ListProjectBody(ctx context.Context, projectID int64) ([]BodyEntry, error)
+	// ReadBody returns a Project's ordered body — its loose Tasks and Milestones
+	// interleaved by stored position, each Milestone carrying its own ordered
+	// Tasks. It is the read half of the Body seam.
+	ReadBody(ctx context.Context, projectID int64) ([]BodyEntry, error)
+	// WriteBodyOrder renumbers a Project's body to match an in-memory ordering:
+	// every top-level slot and every Milestone's own Tasks are set to 0..N-1 in
+	// one transaction. It is the write half of the Body seam — the single
+	// persistence call for reorders and for placing a freshly inserted row.
+	WriteBodyOrder(ctx context.Context, projectID int64, order BodyOrder) error
+	// InsertLooseTask appends a loose Task to the end of a Project's body and
+	// returns it as stored; placement is a follow-up WriteBodyOrder.
+	InsertLooseTask(ctx context.Context, projectID int64, title string, dueDate *time.Time, notes string) (Task, error)
+	// InsertMilestoneTask appends a Task to the end of a Milestone's own list and
+	// returns it as stored; placement is a follow-up WriteBodyOrder. Reports
+	// ErrMilestoneNotFound when milestoneID names no live Milestone.
+	InsertMilestoneTask(ctx context.Context, milestoneID int64, title string, dueDate *time.Time, notes string) (Task, error)
+	// InsertMilestone appends a Milestone to the end of a Project's body and
+	// returns it as stored; placement is a follow-up WriteBodyOrder.
+	InsertMilestone(ctx context.Context, projectID int64, name string) (Milestone, error)
 	// SwapBodyPositions exchanges the stored position of two live rows in one
 	// transaction, each named by a BodyRef (its kind picking the table). It is
 	// the reorder primitive for both ordering scopes — the Project body (loose
