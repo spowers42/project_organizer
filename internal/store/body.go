@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"sort"
 
@@ -11,20 +9,13 @@ import (
 )
 
 // bodyTable is the table backing a body-slot kind. Both tables carry id,
-// project_id, position, and archived_at, so the position machinery is shared.
+// project_id, position, and archived_at, so WriteBodyOrder can pick the table
+// from a BodyRef's kind.
 func bodyTable(kind core.BodyEntryKind) string {
 	if kind == core.MilestoneEntry {
 		return "milestones"
 	}
 	return "tasks"
-}
-
-// notFoundErr is the sentinel for a missing live row of the given kind.
-func notFoundErr(kind core.BodyEntryKind) error {
-	if kind == core.MilestoneEntry {
-		return core.ErrMilestoneNotFound
-	}
-	return core.ErrTaskNotFound
 }
 
 // nextBodyPosition is one past the highest position currently used by a
@@ -46,37 +37,11 @@ func (s *Store) nextBodyPosition(ctx context.Context, projectID int64) (int64, e
 	return next, nil
 }
 
-// shiftBodyPositions moves every live body slot of a Project at or after fromPos
-// one place later, across both loose Tasks and Milestones (they share the
-// position space), opening fromPos for an insert. Runs inside the caller's
-// transaction.
-func shiftBodyPositions(ctx context.Context, tx *sql.Tx, projectID, fromPos int64) error {
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE tasks SET position = position + 1 WHERE project_id = ? AND milestone_id IS NULL AND archived_at IS NULL AND position >= ?",
-		projectID, fromPos,
-	); err != nil {
-		return fmt.Errorf("shifting task positions for project %d: %w", projectID, err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE milestones SET position = position + 1 WHERE project_id = ? AND archived_at IS NULL AND position >= ?",
-		projectID, fromPos,
-	); err != nil {
-		return fmt.Errorf("shifting milestone positions for project %d: %w", projectID, err)
-	}
-	return nil
-}
-
 // positionedEntry pairs a body entry with its stored position, the key
-// ListProjectBody merges the two slot tables on.
+// ReadBody merges the two slot tables on.
 type positionedEntry struct {
 	pos   int64
 	entry core.BodyEntry
-}
-
-// ListProjectBody is the pre-Body-module name for ReadBody, kept while callers
-// migrate.
-func (s *Store) ListProjectBody(ctx context.Context, projectID int64) ([]core.BodyEntry, error) {
-	return s.ReadBody(ctx, projectID)
 }
 
 // ReadBody returns a Project's ordered body: its live loose Tasks and
@@ -221,64 +186,4 @@ func (s *Store) listBodyMilestones(ctx context.Context, projectID int64) ([]posi
 		return nil, fmt.Errorf("listing body milestones for project %d: %w", projectID, err)
 	}
 	return out, nil
-}
-
-// SwapBodyPositions exchanges the stored position of two live rows in a single
-// transaction, so a reorder never leaves a scope with a duplicated or skipped
-// position. Each row is named by a BodyRef whose kind picks the table (tasks or
-// milestones); the swap is a blind by-id position exchange, used for both the
-// Project body and a Milestone's own Tasks. Either ref matching no live row is
-// its kind's not-found sentinel and rolls the swap back.
-func (s *Store) SwapBodyPositions(ctx context.Context, a, b core.BodyRef) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("swapping body positions: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	aPos, err := liveBodyPosition(ctx, tx, a)
-	if err != nil {
-		return err
-	}
-	bPos, err := liveBodyPosition(ctx, tx, b)
-	if err != nil {
-		return err
-	}
-
-	if err := setBodyPosition(ctx, tx, a, bPos); err != nil {
-		return err
-	}
-	if err := setBodyPosition(ctx, tx, b, aPos); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("swapping body positions: %w", err)
-	}
-	return nil
-}
-
-// liveBodyPosition reads one live slot's position within a transaction, mapping
-// a missing row to the ref's kind's not-found sentinel.
-func liveBodyPosition(ctx context.Context, tx *sql.Tx, ref core.BodyRef) (int64, error) {
-	var pos int64
-	err := tx.QueryRowContext(ctx,
-		"SELECT position FROM "+bodyTable(ref.Kind)+" WHERE id = ? AND archived_at IS NULL", ref.ID,
-	).Scan(&pos)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, notFoundErr(ref.Kind)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("reading %s %d position: %w", bodyTable(ref.Kind), ref.ID, err)
-	}
-	return pos, nil
-}
-
-// setBodyPosition writes one slot's position within a transaction.
-func setBodyPosition(ctx context.Context, tx *sql.Tx, ref core.BodyRef, pos int64) error {
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE "+bodyTable(ref.Kind)+" SET position = ? WHERE id = ?", pos, ref.ID,
-	); err != nil {
-		return fmt.Errorf("moving %s %d: %w", bodyTable(ref.Kind), ref.ID, err)
-	}
-	return nil
 }
