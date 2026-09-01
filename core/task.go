@@ -125,24 +125,12 @@ func (c *Core) MoveTask(ctx context.Context, id int64, dir MoveDir) ([]BodyEntry
 // ok is false when the body is exhausted with nothing incomplete.
 // ErrProjectNotFound if projectID does not name a live Project.
 func (c *Core) NextStep(ctx context.Context, projectID int64) (Task, bool, error) {
-	body, err := c.ProjectBody(ctx, projectID)
+	body, err := c.loadBody(ctx, projectID)
 	if err != nil {
 		return Task{}, false, err
 	}
-	for _, e := range body {
-		if e.Kind == TaskEntry {
-			if !e.Task.Done {
-				return *e.Task, true, nil
-			}
-			continue
-		}
-		for _, mt := range e.Milestone.Tasks {
-			if !mt.Done {
-				return mt, true, nil
-			}
-		}
-	}
-	return Task{}, false, nil
+	task, ok := body.NextStep()
+	return task, ok, nil
 }
 
 // ActiveProjectNextStep pairs an Active Project with its resolved Next step.

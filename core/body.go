@@ -37,6 +37,67 @@ type BodyRef struct {
 	ID   int64
 }
 
+// Body is a Project's ordered body held in memory: the interleaved loose Tasks
+// and Milestones (each Milestone carrying its own ordered Tasks) as one value
+// the domain rules — Next step, and later reordering — run over. It holds no
+// Store and creates no rows, so it tests as a pure value; Core loads it, calls
+// it, and persists the result.
+type Body struct {
+	entries []BodyEntry
+}
+
+// newBody wraps a freshly loaded slice as a Body, enforcing the invariant that
+// every Milestone's Tasks slice is non-nil (possibly empty) so callers never
+// have to nil-check it.
+func newBody(entries []BodyEntry) *Body {
+	for _, e := range entries {
+		if e.Kind == MilestoneEntry && e.Milestone.Tasks == nil {
+			e.Milestone.Tasks = []Task{}
+		}
+	}
+	return &Body{entries: entries}
+}
+
+// Tree is the body's ordered slots, loose Tasks and Milestones interleaved,
+// each Milestone carrying its own ordered Tasks.
+func (b *Body) Tree() []BodyEntry {
+	return b.entries
+}
+
+// NextStep resolves the single Task the Project is waiting on: walk the slots in
+// order to the first incomplete one — a not-done loose Task is it; a Milestone
+// yields its first not-done Task; a Milestone with none (empty or all done) is
+// skipped. ok is false when nothing is incomplete.
+func (b *Body) NextStep() (Task, bool) {
+	for _, e := range b.entries {
+		if e.Kind == TaskEntry {
+			if !e.Task.Done {
+				return *e.Task, true
+			}
+			continue
+		}
+		for _, mt := range e.Milestone.Tasks {
+			if !mt.Done {
+				return mt, true
+			}
+		}
+	}
+	return Task{}, false
+}
+
+// loadBody reads a Project's ordered body and wraps it as a Body.
+// ErrProjectNotFound if projectID does not name a live Project.
+func (c *Core) loadBody(ctx context.Context, projectID int64) (*Body, error) {
+	if _, err := c.store.GetProject(ctx, projectID); err != nil {
+		return nil, err
+	}
+	entries, err := c.store.ListProjectBody(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return newBody(entries), nil
+}
+
 // Ref is the slot's BodyRef, read without the caller re-checking Kind.
 func (e BodyEntry) Ref() BodyRef {
 	if e.Kind == MilestoneEntry {

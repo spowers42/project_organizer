@@ -63,10 +63,11 @@ func (c *Core) AddMilestoneAfter(ctx context.Context, projectID int64, after Bod
 // interleaved in stored order. ErrProjectNotFound if projectID does not name a
 // live Project.
 func (c *Core) ProjectBody(ctx context.Context, projectID int64) ([]BodyEntry, error) {
-	if _, err := c.store.GetProject(ctx, projectID); err != nil {
+	body, err := c.loadBody(ctx, projectID)
+	if err != nil {
 		return nil, err
 	}
-	return c.store.ListProjectBody(ctx, projectID)
+	return body.Tree(), nil
 }
 
 // AddMilestoneTask appends a Task to a Milestone's own ordered list. The title
