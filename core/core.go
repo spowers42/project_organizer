@@ -50,6 +50,11 @@ type Store interface {
 	// SetTaskDone sets a live Task's completion flag. Reports ErrTaskNotFound
 	// when no live row matches.
 	SetTaskDone(ctx context.Context, id int64, done bool) (Task, error)
+	// SetTaskMilestone rewrites which scope a live Task belongs to: nil for
+	// loose, or a Milestone id to move it there. It only touches that column —
+	// the caller repositions the Task with WriteBodyOrder afterward. Reports
+	// ErrTaskNotFound when no live row matches.
+	SetTaskMilestone(ctx context.Context, id int64, milestoneID *int64) (Task, error)
 	// GetTask reads one live Task by id, reporting ErrTaskNotFound when it is
 	// missing or archived. Core uses it to resolve a Task's owning Project
 	// before loading that Project's Body.

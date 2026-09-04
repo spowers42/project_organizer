@@ -122,6 +122,18 @@ func (s *Store) UpdateTask(ctx context.Context, id int64, title string, dueDate 
 	)
 }
 
+// SetTaskMilestone rewrites a live Task's milestone_id column: nil for loose.
+func (s *Store) SetTaskMilestone(ctx context.Context, id int64, milestoneID *int64) (core.Task, error) {
+	var arg any
+	if milestoneID != nil {
+		arg = *milestoneID
+	}
+	return s.updateTask(ctx, id,
+		"UPDATE tasks SET milestone_id = ? WHERE id = ? AND archived_at IS NULL",
+		arg, id,
+	)
+}
+
 // SetTaskDone sets a live Task's completion flag.
 func (s *Store) SetTaskDone(ctx context.Context, id int64, done bool) (core.Task, error) {
 	return s.updateTask(ctx, id,
