@@ -55,11 +55,13 @@ func (c *Core) AddTask(ctx context.Context, projectID int64, in TaskInput) (Task
 }
 
 // AddTaskAfter inserts a loose Task into a Project's body one place after the
-// slot afterTaskID holds — just below the cursor — pushing the following entries
-// one place later. afterTaskID 0 inserts at the front. Same title validation as
-// AddTask. ErrProjectNotFound if projectID names no live Project; ErrTaskNotFound
-// if a non-zero afterTaskID is not one of its loose Tasks.
-func (c *Core) AddTaskAfter(ctx context.Context, projectID, afterTaskID int64, in TaskInput) (Task, error) {
+// body slot `after` holds — just below the cursor — pushing the following
+// entries one place later. The anchor may be a loose Task or a Milestone, so a
+// loose Task can be dropped right after a Milestone; a zero `after` inserts at
+// the front. Same title validation as AddTask. ErrProjectNotFound if projectID
+// names no live Project; ErrTaskNotFound / ErrMilestoneNotFound if a non-zero
+// `after` names no live body slot of the Project.
+func (c *Core) AddTaskAfter(ctx context.Context, projectID int64, after BodyRef, in TaskInput) (Task, error) {
 	title, err := validateTaskInput(in)
 	if err != nil {
 		return Task{}, err
@@ -68,15 +70,14 @@ func (c *Core) AddTaskAfter(ctx context.Context, projectID, afterTaskID int64, i
 	if err != nil {
 		return Task{}, err
 	}
-	anchor := BodyRef{Kind: TaskEntry, ID: afterTaskID}
-	if afterTaskID != 0 && body.indexOfSlot(anchor) == -1 {
-		return Task{}, ErrTaskNotFound // stale cursor anchor; add nothing
+	if after.ID != 0 && body.indexOfSlot(after) == -1 {
+		return Task{}, notFoundFor(after.Kind) // stale cursor anchor; add nothing
 	}
 	t, err := c.store.InsertLooseTask(ctx, projectID, title, in.DueDate, in.Notes)
 	if err != nil {
 		return Task{}, err
 	}
-	if err := c.placeAfterInsert(ctx, projectID, BodyRef{Kind: TaskEntry, ID: t.ID}, anchor); err != nil {
+	if err := c.placeAfterInsert(ctx, projectID, BodyRef{Kind: TaskEntry, ID: t.ID}, after); err != nil {
 		return Task{}, err
 	}
 	return t, nil

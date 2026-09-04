@@ -135,32 +135,41 @@ func (p *projectBody) selectedTask() (core.Task, bool) {
 	return r.task, true
 }
 
-// insertTargetBelowCursor decides where a new Task goes: just below the
-// selection, so "add" drops it at the cursor rather than always at the end. On a
-// loose Task it lands right after that Task; on a Milestone header it becomes the
-// Milestone's first Task; on a nested Task it lands right after that one; with no
-// selection it appends to the Project body.
-func (p *projectBody) insertTargetBelowCursor() (taskFormTarget, string) {
+// looseInsertTarget decides where the "add Task" command (a) drops a new loose
+// Task: always in the Project body, just below the selection. On a loose Task it
+// lands right after that Task; on a Milestone header or one of its nested Tasks
+// it lands right after that whole Milestone (a loose Task never falls inside
+// one); with no selection it appends to the Project body.
+func (p *projectBody) looseInsertTarget() (taskFormTarget, string) {
+	return taskFormTarget{afterRef: p.slotBelowCursor()}, "Add Task"
+}
+
+// milestoneInsertTarget decides where the "add Task to Milestone" command (A)
+// drops a new Task: inside the Milestone at or containing the cursor. On a
+// header it becomes the Milestone's first Task; on a nested Task it lands right
+// after that one. ok is false when the cursor is not on or inside any Milestone,
+// so the command stays inert there.
+func (p *projectBody) milestoneInsertTarget() (taskFormTarget, string, bool) {
 	r, ok := p.selectedRow()
 	if !ok {
-		return taskFormTarget{}, "Add Task"
+		return taskFormTarget{}, "", false
 	}
 	switch r.kind {
 	case milestoneHeadRow:
-		return taskFormTarget{milestoneID: r.milestone.ID}, "Add Task to Milestone"
+		return taskFormTarget{milestoneID: r.milestone.ID}, "Add Task to Milestone", true
 	case milestoneTaskRow:
-		return taskFormTarget{milestoneID: r.milestoneID, afterTaskID: r.task.ID}, "Add Task to Milestone"
+		return taskFormTarget{milestoneID: r.milestoneID, afterTaskID: r.task.ID}, "Add Task to Milestone", true
 	default:
-		return taskFormTarget{afterTaskID: r.task.ID}, "Add Task"
+		return taskFormTarget{}, "", false
 	}
 }
 
-// milestoneAnchorBelowCursor is the body slot a new Milestone should land just
-// after — the selection's place in the body. On a loose Task or a Milestone
-// header it is that entry; on a nested Task it is the enclosing Milestone (a
-// Milestone cannot nest). With no selection it is the zero BodyRef, which
-// inserts at the front.
-func (p *projectBody) milestoneAnchorBelowCursor() core.BodyRef {
+// slotBelowCursor is the body slot a new entry — a loose Task (a) or a Milestone
+// (m) — should land just after: the selection's place in the body. On a loose
+// Task or a Milestone header it is that entry; on a nested Task it is the
+// enclosing Milestone (a Milestone cannot nest). With no selection it is the
+// zero BodyRef, which inserts at the front.
+func (p *projectBody) slotBelowCursor() core.BodyRef {
 	r, ok := p.selectedRow()
 	if !ok {
 		return core.BodyRef{}

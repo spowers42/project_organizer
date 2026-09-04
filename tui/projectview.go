@@ -277,14 +277,25 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	case "a":
 		if v.ready() {
-			target, heading := v.body.insertTargetBelowCursor()
+			target, heading := v.body.looseInsertTarget()
+			f := newTaskForm(heading, nil)
+			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, target) })
+			v.status = ""
+		}
+	case "A":
+		if v.ready() {
+			target, heading, ok := v.body.milestoneInsertTarget()
+			if !ok {
+				v.status = "No Milestone here — put the cursor on a Milestone or one of its Tasks."
+				break
+			}
 			f := newTaskForm(heading, nil)
 			v.overlay.open(&f, func() tea.Cmd { return v.submitTaskForm(&f, target) })
 			v.status = ""
 		}
 	case "m":
 		if v.ready() {
-			anchor := v.body.milestoneAnchorBelowCursor()
+			anchor := v.body.slotBelowCursor()
 			f := newMilestoneForm("Add Milestone")
 			v.overlay.open(&f, func() tea.Cmd {
 				name := f.name()
@@ -342,12 +353,14 @@ func (v *projectViewModel) ready() bool {
 //   - editID set: edit that Task.
 //   - milestoneID set: insert into that Milestone just after afterTaskID
 //     (afterTaskID 0 puts it first).
-//   - afterTaskID set alone: insert a loose Task just after that Task.
+//   - afterRef set alone: insert a loose Task just after that body slot — a
+//     loose Task or a Milestone.
 //   - all zero: append a loose Task to the Project body.
 type taskFormTarget struct {
 	editID      int64
 	milestoneID int64
 	afterTaskID int64
+	afterRef    core.BodyRef
 }
 
 // submitTaskForm turns the form's fields into the core call named by target. A
@@ -366,8 +379,8 @@ func (v *projectViewModel) submitTaskForm(f *taskForm, target taskFormTarget) te
 		return v.addTaskCmd(func(ctx context.Context) (core.Task, error) {
 			return v.core.AddMilestoneTaskAfter(ctx, mid, after, in)
 		})
-	case target.afterTaskID != 0:
-		after := target.afterTaskID
+	case target.afterRef.ID != 0:
+		after := target.afterRef
 		return v.addTaskCmd(func(ctx context.Context) (core.Task, error) {
 			return v.core.AddTaskAfter(ctx, v.projectID, after, in)
 		})
@@ -399,7 +412,8 @@ func (v *projectViewModel) View() string {
 	b.WriteString("\nBody:\n")
 	b.WriteString(v.body.render())
 	b.WriteString(statusBlock(v.status))
-	b.WriteString("\n↑/↓: select   shift+↑/↓: reorder   space: toggle done   a: add Task   m: add Milestone   t: edit Task\n")
+	b.WriteString("\n↑/↓: select   shift+↑/↓: reorder   space: toggle done   t: edit Task\n")
+	b.WriteString("a: add Task   A: add Task to Milestone   m: add Milestone\n")
 	b.WriteString("e: edit Project   s: set lifecycle   d: archive   esc: back   q: quit\n")
 	return b.String()
 }
