@@ -76,7 +76,7 @@ func TestProjectViewRendersMilestoneTasksNested(t *testing.T) {
 	}
 }
 
-// Pressing a with a Milestone selected adds a Task inside that Milestone.
+// Pressing A with a Milestone selected adds a Task inside that Milestone.
 func TestProjectViewAddTaskIntoSelectedMilestone(t *testing.T) {
 	c := newTestCore(t)
 	p := mustProject(t, c, "Add inside")
@@ -86,9 +86,9 @@ func TestProjectViewAddTaskIntoSelectedMilestone(t *testing.T) {
 	drainInit(v.Update, v.Init())
 	// "Alpha" is the only row and is selected.
 
-	v.Update(key("a"))
+	v.Update(key("A"))
 	if !v.overlay.active() {
-		t.Fatal("pressing a did not open the add-Task form")
+		t.Fatal("pressing A did not open the add-Task form")
 	}
 	if !strings.Contains(v.overlay.render(), "Add Task to Milestone") {
 		t.Errorf("overlay = %q, want the Milestone-scoped heading", v.overlay.render())
@@ -112,7 +112,7 @@ func TestProjectViewAddTaskIntoSelectedMilestone(t *testing.T) {
 	}
 }
 
-// With a nested Task selected, a inserts the new Task into the same Milestone
+// With a nested Task selected, A inserts the new Task into the same Milestone
 // just below the cursor — after the selected Task, not at the end.
 func TestProjectViewAddTaskFromNestedSelection(t *testing.T) {
 	c := newTestCore(t)
@@ -124,7 +124,7 @@ func TestProjectViewAddTaskFromNestedSelection(t *testing.T) {
 	drainInit(v.Update, v.Init())
 	v.Update(key("down")) // select "a1"
 
-	v.Update(key("a"))
+	v.Update(key("A"))
 	for _, msg := range typeString("a2") {
 		v.Update(msg)
 	}
@@ -138,7 +138,7 @@ func TestProjectViewAddTaskFromNestedSelection(t *testing.T) {
 	}
 }
 
-// With a Milestone header selected, a inserts the new Task as the Milestone's
+// With a Milestone header selected, A inserts the new Task as the Milestone's
 // first Task.
 func TestProjectViewAddTaskFromMilestoneHeaderInsertsFirst(t *testing.T) {
 	c := newTestCore(t)
@@ -150,7 +150,7 @@ func TestProjectViewAddTaskFromMilestoneHeaderInsertsFirst(t *testing.T) {
 	drainInit(v.Update, v.Init())
 	// "Alpha" header is row 0 and selected.
 
-	v.Update(key("a"))
+	v.Update(key("A"))
 	for _, msg := range typeString("a1") {
 		v.Update(msg)
 	}
@@ -158,6 +158,83 @@ func TestProjectViewAddTaskFromMilestoneHeaderInsertsFirst(t *testing.T) {
 
 	if got := milestoneTaskTitles(t, c, m.ID); !slices.Equal(got, []string{"a1", "a2", "a3"}) {
 		t.Errorf("milestone tasks = %v, want the new Task first", got)
+	}
+}
+
+// Regression (issue #40): when the body holds only a Milestone, a still adds a
+// loose Task — right after that Milestone — rather than being forced inside it.
+func TestProjectViewAddLooseTaskFromMilestoneOnlyBody(t *testing.T) {
+	c := newTestCore(t)
+	p := mustProject(t, c, "All milestones")
+	seedMilestoneReturning(t, c, p.ID, "Alpha")
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+	// "Alpha" is the only row and is selected.
+
+	v.Update(key("a"))
+	if !strings.Contains(v.overlay.render(), "Add Task") || strings.Contains(v.overlay.render(), "to Milestone") {
+		t.Errorf("overlay = %q, want the loose-Task heading", v.overlay.render())
+	}
+	for _, msg := range typeString("loose one") {
+		v.Update(msg)
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	if got := bodyTitles(t, c, p.ID); !slices.Equal(got, []string{"loose one"}) {
+		t.Fatalf("loose tasks = %v, want the new Task loose in the body", got)
+	}
+	if got := bodyLabelsOf(t, c, p.ID); !slices.Equal(got, []string{"ms:Alpha", "task:loose one"}) {
+		t.Errorf("body = %v, want the loose Task right after the Milestone", got)
+	}
+	if got := selectedBodyLabel(v); got != "loose one" {
+		t.Errorf("selection = %q, want the cursor on the inserted loose Task", got)
+	}
+}
+
+// a from a nested Task selection adds a loose Task after the whole enclosing
+// Milestone — it never falls inside the Milestone.
+func TestProjectViewAddLooseTaskFromNestedSelection(t *testing.T) {
+	c := newTestCore(t)
+	p := mustProject(t, c, "Escape the milestone")
+	m := seedMilestoneReturning(t, c, p.ID, "Alpha")
+	seedMilestoneTasks(t, c, m.ID, "a1", "a2")
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+	v.Update(key("down")) // select "a1"
+
+	v.Update(key("a"))
+	for _, msg := range typeString("after alpha") {
+		v.Update(msg)
+	}
+	runCmd(v.Update, v.Update(key("enter")))
+
+	if got := milestoneTaskTitles(t, c, m.ID); !slices.Equal(got, []string{"a1", "a2"}) {
+		t.Errorf("milestone tasks = %v, want them untouched", got)
+	}
+	if got := bodyLabelsOf(t, c, p.ID); !slices.Equal(got, []string{"ms:Alpha", "task:after alpha"}) {
+		t.Errorf("body = %v, want the loose Task right after the Milestone", got)
+	}
+}
+
+// A is inert when the cursor is on a loose Task — there is no Milestone to add
+// to — and leaves a hint on the status line.
+func TestProjectViewAddTaskToMilestoneInertOnLooseTask(t *testing.T) {
+	c := newTestCore(t)
+	p := mustProject(t, c, "No milestone")
+	seedTasks(t, c, p.ID, "just loose")
+
+	v := newProjectView(c, p.ID)
+	drainInit(v.Update, v.Init())
+	// "just loose" is the only row and is selected.
+
+	v.Update(key("A"))
+	if v.overlay.active() {
+		t.Error("A opened a form with no Milestone at the cursor, want it inert")
+	}
+	if !strings.Contains(v.View(), "No Milestone here") {
+		t.Errorf("view = %q, want the no-Milestone hint", v.View())
 	}
 }
 
