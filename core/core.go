@@ -62,6 +62,10 @@ type Store interface {
 	// GetMilestone reads one live Milestone by id, reporting
 	// ErrMilestoneNotFound when it is missing or archived.
 	GetMilestone(ctx context.Context, id int64) (Milestone, error)
+	// SetMilestoneCompletionAck rewrites a live Milestone's completion
+	// acknowledgement flag. Reports ErrMilestoneNotFound when no live row
+	// matches.
+	SetMilestoneCompletionAck(ctx context.Context, id int64, acked bool) (Milestone, error)
 
 	// ReadBody returns a Project's ordered body — its loose Tasks and Milestones
 	// interleaved by stored position, each Milestone carrying its own ordered

@@ -50,6 +50,9 @@ func (c *Core) moveTaskToMilestone(ctx context.Context, taskID, milestoneID int6
 	if _, err := c.store.SetTaskMilestone(ctx, taskID, &milestoneID); err != nil {
 		return Task{}, err
 	}
+	if err := c.clearMilestoneAck(ctx, milestoneID); err != nil {
+		return Task{}, err
+	}
 	body, err := c.loadBody(ctx, task.ProjectID)
 	if err != nil {
 		return Task{}, err

@@ -14,11 +14,52 @@ import (
 //
 // Tasks is populated by ProjectBody (and left nil by GetMilestone, which reads
 // the Milestone alone). Use MilestoneTasks for the list on its own.
+//
+// Completion is derived, never stored: a Milestone is complete when it has at
+// least one Task and every Task is done (see milestoneComplete). CompletionAcked
+// tracks only whether the user has been prompted for the *current* completion,
+// so the "just completed" signal SetTaskDone returns fires once; it is cleared
+// whenever the Milestone gains a Task or one of its Tasks is un-completed, so a
+// later re-completion signals again.
 type Milestone struct {
-	ID        int64
-	ProjectID int64
-	Name      string
-	Tasks     []Task
+	ID              int64
+	ProjectID       int64
+	Name            string
+	Tasks           []Task
+	CompletionAcked bool
+}
+
+// milestoneComplete reports whether m is finished by its own Tasks: non-empty
+// and every Task done. m.Tasks must be populated (as ProjectBody and
+// MilestoneTasks do); an empty Milestone is never complete.
+func milestoneComplete(m Milestone) bool {
+	if len(m.Tasks) == 0 {
+		return false
+	}
+	for _, t := range m.Tasks {
+		if !t.Done {
+			return false
+		}
+	}
+	return true
+}
+
+// AckMilestoneComplete acknowledges a Milestone's current derived completion,
+// suppressing the "just completed" signal until the acknowledgement is cleared
+// by a Task added to it or one of its Tasks being un-completed. The TUI calls
+// this for both confirm and decline — core tracks no separate "declined"
+// state, only whether the user has already been asked. ErrMilestoneNotFound if
+// milestoneID does not name a live Milestone.
+func (c *Core) AckMilestoneComplete(ctx context.Context, milestoneID int64) (Milestone, error) {
+	return c.store.SetMilestoneCompletionAck(ctx, milestoneID, true)
+}
+
+// clearMilestoneAck resets a Milestone's completion acknowledgement so a
+// completion produced by a subsequent change signals again. Called wherever a
+// Task is added into a Milestone.
+func (c *Core) clearMilestoneAck(ctx context.Context, milestoneID int64) error {
+	_, err := c.store.SetMilestoneCompletionAck(ctx, milestoneID, false)
+	return err
 }
 
 // Errors returned by the Milestone operations. Callers match them with
@@ -93,7 +134,14 @@ func (c *Core) AddMilestoneTask(ctx context.Context, milestoneID int64, in TaskI
 	if err != nil {
 		return Task{}, err
 	}
-	return c.store.InsertMilestoneTask(ctx, milestoneID, title, in.DueDate, in.Notes)
+	t, err := c.store.InsertMilestoneTask(ctx, milestoneID, title, in.DueDate, in.Notes)
+	if err != nil {
+		return Task{}, err
+	}
+	if err := c.clearMilestoneAck(ctx, milestoneID); err != nil {
+		return Task{}, err
+	}
+	return t, nil
 }
 
 // AddMilestoneTaskAfter inserts a Task into a Milestone's ordered list one place
@@ -124,6 +172,9 @@ func (c *Core) AddMilestoneTaskAfter(ctx context.Context, milestoneID, afterTask
 	}
 	t, err := c.store.InsertMilestoneTask(ctx, milestoneID, title, in.DueDate, in.Notes)
 	if err != nil {
+		return Task{}, err
+	}
+	if err := c.clearMilestoneAck(ctx, milestoneID); err != nil {
 		return Task{}, err
 	}
 	fresh, err := c.loadBody(ctx, m.ProjectID)
