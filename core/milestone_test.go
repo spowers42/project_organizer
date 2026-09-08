@@ -296,7 +296,7 @@ func TestEmptyMilestoneDoesNotChangeNextStep(t *testing.T) {
 	}
 
 	// Complete "first"; the empty Milestone still contributes nothing.
-	if _, err := c.SetTaskDone(ctx, first.ID, true); err != nil {
+	if _, _, err := c.SetTaskDone(ctx, first.ID, true); err != nil {
 		t.Fatalf("SetTaskDone: %v", err)
 	}
 	step, ok, err = c.NextStep(ctx, p.ID)

@@ -100,8 +100,42 @@ func (c *Core) EditTask(ctx context.Context, id int64, in TaskInput) (Task, erro
 // SetTaskDone marks a Task done or not done. Completion order is unconstrained:
 // a Task can be completed or un-completed at any time, regardless of the other
 // Tasks in the body. ErrTaskNotFound if id does not name a live Task.
-func (c *Core) SetTaskDone(ctx context.Context, id int64, done bool) (Task, error) {
-	return c.store.SetTaskDone(ctx, id, done)
+//
+// For a Task inside a Milestone, it also maintains that Milestone's completion
+// acknowledgement: un-completing the Task clears it, so a later re-completion
+// signals again, and completing the Milestone's last incomplete Task returns
+// the Milestone as a "just completed" signal — unless it is already
+// acknowledged — for the caller to prompt on. The signal is nil in every other
+// case: a loose Task, a Milestone Task that leaves the Milestone incomplete, or
+// one whose completion was already acknowledged.
+func (c *Core) SetTaskDone(ctx context.Context, id int64, done bool) (Task, *Milestone, error) {
+	task, err := c.store.SetTaskDone(ctx, id, done)
+	if err != nil {
+		return Task{}, nil, err
+	}
+	if task.MilestoneID == nil {
+		return task, nil, nil
+	}
+	milestoneID := *task.MilestoneID
+	if !done {
+		if err := c.clearMilestoneAck(ctx, milestoneID); err != nil {
+			return task, nil, err
+		}
+		return task, nil, nil
+	}
+	m, err := c.store.GetMilestone(ctx, milestoneID)
+	if err != nil {
+		return task, nil, err
+	}
+	tasks, err := c.MilestoneTasks(ctx, milestoneID)
+	if err != nil {
+		return task, nil, err
+	}
+	m.Tasks = tasks
+	if m.CompletionAcked || !milestoneComplete(m) {
+		return task, nil, nil
+	}
+	return task, &m, nil
 }
 
 // ProjectTasks returns a Project's loose Tasks in body order.

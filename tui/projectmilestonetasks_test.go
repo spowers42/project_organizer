@@ -296,6 +296,13 @@ func TestProjectViewNestedTaskToggleAndEdit(t *testing.T) {
 		t.Errorf("nested Task Done = false after toggle, want true")
 	}
 
+	// Completing the Milestone's only Task opens the completion prompt; decline
+	// it to get back to the body before editing.
+	if !v.overlay.active() {
+		t.Fatal("completing the Milestone's last Task did not open the completion prompt")
+	}
+	runCmd(v.Update, v.Update(key("n")))
+
 	v.Update(key("t"))
 	if !v.overlay.active() {
 		t.Fatal("pressing t on a nested Task did not open the edit form")
@@ -375,7 +382,7 @@ func TestDashboardNextStepSkipsEmptyAndAllDoneMilestones(t *testing.T) {
 	seedMilestoneTasks(t, c, live.ID, "l1")
 
 	doneTask := c2MilestoneTask(t, c, done.ID, "d1")
-	if _, err := c.SetTaskDone(context.Background(), doneTask.ID, true); err != nil {
+	if _, _, err := c.SetTaskDone(context.Background(), doneTask.ID, true); err != nil {
 		t.Fatalf("SetTaskDone: %v", err)
 	}
 

@@ -184,6 +184,18 @@ func (p *projectBody) slotBelowCursor() core.BodyRef {
 	}
 }
 
+// milestones lists the body's Milestones in body order, for the "move into a
+// Milestone" picker (>).
+func (p *projectBody) milestones() []core.Milestone {
+	var ms []core.Milestone
+	for _, r := range p.rows {
+		if r.kind == milestoneHeadRow {
+			ms = append(ms, r.milestone)
+		}
+	}
+	return ms
+}
+
 // render draws the body — loose Tasks and Milestones interleaved, each
 // Milestone's own Tasks nested beneath it — with a caret against the selected
 // row.

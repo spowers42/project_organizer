@@ -50,9 +50,21 @@ type bodyLoadedMsg struct {
 }
 
 // taskSavedMsg is the result of an edit or a complete-toggle on a Task. A nil
-// err means the change persisted.
+// err means the change persisted. milestoneJustCompleted is set when the
+// toggle completed the last incomplete Task in a Milestone that has not yet
+// been acknowledged — the screen opens the confirm/decline prompt for it.
 type taskSavedMsg struct {
-	err error
+	err                    error
+	milestoneJustCompleted *core.Milestone
+}
+
+// milestoneAckedMsg is the result of answering the Milestone completion
+// prompt. confirmed carries which answer it was, for the status message; a nil
+// err means the acknowledgement persisted (both answers acknowledge it, so it
+// does not re-prompt).
+type milestoneAckedMsg struct {
+	confirmed bool
+	err       error
 }
 
 // entryAddedMsg is the result of adding a body entry — a Task or a Milestone. On
@@ -134,8 +146,50 @@ func (v *projectViewModel) addMilestoneCmd(create func(context.Context) (core.Mi
 // toggleTask flips the selected Task's completion flag.
 func (v *projectViewModel) toggleTask(task core.Task) tea.Cmd {
 	return func() tea.Msg {
-		_, err := v.core.SetTaskDone(context.Background(), task.ID, !task.Done)
-		return taskSavedMsg{err: err}
+		_, m, err := v.core.SetTaskDone(context.Background(), task.ID, !task.Done)
+		return taskSavedMsg{err: err, milestoneJustCompleted: m}
+	}
+}
+
+// ackMilestoneComplete acknowledges a Milestone's completion — both Confirm
+// and Decline call this, so it does not re-prompt; confirmed carries which
+// answer it was, for the status message.
+func (v *projectViewModel) ackMilestoneComplete(milestoneID int64, confirmed bool) tea.Cmd {
+	return func() tea.Msg {
+		_, err := v.core.AckMilestoneComplete(context.Background(), milestoneID)
+		return milestoneAckedMsg{confirmed: confirmed, err: err}
+	}
+}
+
+// moveTaskToMilestoneCmd crosses a loose Task into a Milestone: an explicit,
+// distinct action from an ordinary reorder. It reloads the body so the Task
+// shows nested under its new Milestone with the selection following it.
+func (v *projectViewModel) moveTaskToMilestoneCmd(taskID, milestoneID int64) tea.Cmd {
+	return v.crossLevelMoveCmd(milestoneTaskRow, func(ctx context.Context) (core.Task, error) {
+		return v.core.MoveTaskToMilestone(ctx, taskID, milestoneID)
+	})
+}
+
+// moveTaskToBodyCmd crosses a Milestone Task out to the Project body as a
+// loose Task: an explicit, distinct action from an ordinary reorder.
+func (v *projectViewModel) moveTaskToBodyCmd(taskID int64) tea.Cmd {
+	return v.crossLevelMoveCmd(looseTaskRow, func(ctx context.Context) (core.Task, error) {
+		return v.core.MoveTaskToBody(ctx, taskID)
+	})
+}
+
+// crossLevelMoveCmd runs a cross-level mover and reloads the body so the moved
+// Task shows in its new scope with the selection following it, tagged with
+// resultKind (its row kind on the far side of the boundary it just crossed).
+func (v *projectViewModel) crossLevelMoveCmd(resultKind bodyRowKind, move func(context.Context) (core.Task, error)) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		t, err := move(ctx)
+		if err != nil {
+			return bodyMovedMsg{err: err}
+		}
+		body, err := v.core.ProjectBody(ctx, v.projectID)
+		return bodyMovedMsg{body: body, sel: bodyRowKey{kind: resultKind, id: t.ID}, err: err}
 	}
 }
 
@@ -207,6 +261,9 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 		}
 		v.overlay.close()
 		v.status = "Saved."
+		if msg.milestoneJustCompleted != nil {
+			v.promptMilestoneComplete(*msg.milestoneJustCompleted)
+		}
 		return v.loadBody
 	case entryAddedMsg:
 		if msg.err != nil {
@@ -222,7 +279,20 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 			v.status = errorMessage(msg.err)
 			return nil
 		}
+		v.overlay.close() // closes the Milestone picker after a cross-level move; a no-op for an ordinary reorder
 		v.body.apply(msg.body, msg.sel)
+		return nil
+	case milestoneAckedMsg:
+		if msg.err != nil {
+			v.status = errorMessage(msg.err)
+			return nil // keep the overlay open to retry
+		}
+		v.overlay.close()
+		if msg.confirmed {
+			v.status = "Milestone acknowledged complete."
+		} else {
+			v.status = "Milestone left open for more Tasks."
+		}
 		return nil
 	case categoriesLoadedMsg:
 		v.cats = msg.cats
@@ -315,6 +385,28 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if task, ok := v.body.selectedTask(); ok && v.ready() {
 			return v.toggleTask(task)
 		}
+	case ">":
+		if task, ok := v.body.selectedTask(); ok && v.ready() && task.MilestoneID == nil {
+			ms := v.body.milestones()
+			if len(ms) == 0 {
+				v.status = "No Milestone to move into — add one with m first."
+				break
+			}
+			taskID := task.ID
+			lo := newListOverlay(milestoneLabels(ms), 0, "Move into Milestone", "↑/↓: choose   enter: move   esc: cancel")
+			v.overlay.open(&lo, func() tea.Cmd {
+				idx := lo.selectedIndex()
+				if idx < 0 {
+					return nil
+				}
+				return v.moveTaskToMilestoneCmd(taskID, ms[idx].ID)
+			})
+			v.status = ""
+		}
+	case "<":
+		if task, ok := v.body.selectedTask(); ok && v.ready() && task.MilestoneID != nil {
+			return v.moveTaskToBodyCmd(task.ID)
+		}
 	case "e":
 		if v.ready() {
 			p := v.project
@@ -341,6 +433,25 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// promptMilestoneComplete opens the confirm/decline prompt for a Milestone the
+// last toggle just completed. Both answers acknowledge it through core; they
+// differ only in the status message shown afterward.
+func (v *projectViewModel) promptMilestoneComplete(m core.Milestone) {
+	mp := newMilestoneCompletePrompt(fmt.Sprintf("Milestone %q is complete. Confirm?", m.Name))
+	milestoneID := m.ID
+	v.overlay.open(&mp, func() tea.Cmd { return v.ackMilestoneComplete(milestoneID, mp.confirmed()) })
+}
+
+// milestoneLabels is the display labels for the "move into a Milestone"
+// picker, parallel to the Milestone slice it was built from.
+func milestoneLabels(ms []core.Milestone) []string {
+	labels := make([]string, len(ms))
+	for i, m := range ms {
+		labels[i] = m.Name
+	}
+	return labels
 }
 
 // ready reports whether the Project has loaded without error, so the edit and
@@ -414,6 +525,7 @@ func (v *projectViewModel) View() string {
 	b.WriteString(statusBlock(v.status))
 	b.WriteString("\n↑/↓: select   shift+↑/↓: reorder   space: toggle done   t: edit Task\n")
 	b.WriteString("a: add Task   A: add Task to Milestone   m: add Milestone\n")
+	b.WriteString(">: move Task into Milestone   <: move Task out to Project body\n")
 	b.WriteString("e: edit Project   s: set lifecycle   d: archive   esc: back   q: quit\n")
 	return b.String()
 }

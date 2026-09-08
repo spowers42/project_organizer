@@ -217,10 +217,10 @@ func TestSetTaskDoneTogglesInAnyOrder(t *testing.T) {
 	third := mustAddTask(t, c, p.ID, "third")
 
 	// Complete out of body order: third, then first. Second stays open.
-	if _, err := c.SetTaskDone(ctx, third.ID, true); err != nil {
+	if _, _, err := c.SetTaskDone(ctx, third.ID, true); err != nil {
 		t.Fatalf("SetTaskDone(third, true): %v", err)
 	}
-	if _, err := c.SetTaskDone(ctx, first.ID, true); err != nil {
+	if _, _, err := c.SetTaskDone(ctx, first.ID, true); err != nil {
 		t.Fatalf("SetTaskDone(first, true): %v", err)
 	}
 
@@ -237,7 +237,7 @@ func TestSetTaskDoneTogglesInAnyOrder(t *testing.T) {
 	}
 
 	// Un-mark first; completion is reversible.
-	undone, err := c.SetTaskDone(ctx, first.ID, false)
+	undone, _, err := c.SetTaskDone(ctx, first.ID, false)
 	if err != nil {
 		t.Fatalf("SetTaskDone(first, false): %v", err)
 	}
@@ -250,7 +250,7 @@ func TestSetTaskDoneTogglesInAnyOrder(t *testing.T) {
 func TestSetTaskDoneUnknownIDErrors(t *testing.T) {
 	c, _ := newTestCore(t)
 
-	if _, err := c.SetTaskDone(context.Background(), 777, true); !errors.Is(err, core.ErrTaskNotFound) {
+	if _, _, err := c.SetTaskDone(context.Background(), 777, true); !errors.Is(err, core.ErrTaskNotFound) {
 		t.Errorf("error = %v, want ErrTaskNotFound", err)
 	}
 }
@@ -282,7 +282,7 @@ func TestNextStepIsFirstIncompleteLooseTask(t *testing.T) {
 
 	// Complete the first; Next step advances to the next incomplete entry,
 	// even though a later Task is still open too.
-	if _, err := c.SetTaskDone(ctx, one.ID, true); err != nil {
+	if _, _, err := c.SetTaskDone(ctx, one.ID, true); err != nil {
 		t.Fatalf("SetTaskDone(one): %v", err)
 	}
 	step, ok, err = c.NextStep(ctx, p.ID)
@@ -314,7 +314,7 @@ func TestNextStepAllDoneHasNone(t *testing.T) {
 	a := mustAddTask(t, c, p.ID, "a")
 	b := mustAddTask(t, c, p.ID, "b")
 	for _, id := range []int64{a.ID, b.ID} {
-		if _, err := c.SetTaskDone(ctx, id, true); err != nil {
+		if _, _, err := c.SetTaskDone(ctx, id, true); err != nil {
 			t.Fatalf("SetTaskDone(%d): %v", id, err)
 		}
 	}
@@ -347,7 +347,7 @@ func TestDashboardShowsNextStepForEachActiveProject(t *testing.T) {
 
 	finished := mustCreateProject(t, c, "finished", other)
 	fin := mustAddTask(t, c, finished.ID, "already done")
-	if _, err := c.SetTaskDone(ctx, fin.ID, true); err != nil {
+	if _, _, err := c.SetTaskDone(ctx, fin.ID, true); err != nil {
 		t.Fatalf("SetTaskDone: %v", err)
 	}
 

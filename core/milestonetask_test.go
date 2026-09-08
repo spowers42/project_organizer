@@ -404,7 +404,7 @@ func assertNextStep(t *testing.T, c *core.Core, projectID, wantID int64, wantTit
 // mustSetDone marks a Task done through core and fails the test on error.
 func mustSetDone(t *testing.T, c *core.Core, id int64) {
 	t.Helper()
-	if _, err := c.SetTaskDone(context.Background(), id, true); err != nil {
+	if _, _, err := c.SetTaskDone(context.Background(), id, true); err != nil {
 		t.Fatalf("SetTaskDone(%d): %v", id, err)
 	}
 }

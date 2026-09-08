@@ -338,11 +338,11 @@ func TestDashboardShowsNextStep(t *testing.T) {
 
 	// Complete every Task; the dashboard then shows no Next step.
 	for _, id := range []int64{a.ID} {
-		if _, err := c.SetTaskDone(ctx, id, true); err != nil {
+		if _, _, err := c.SetTaskDone(ctx, id, true); err != nil {
 			t.Fatalf("SetTaskDone: %v", err)
 		}
 	}
-	if _, err := c.SetTaskDone(ctx, secondTaskID(t, c, p.ID), true); err != nil {
+	if _, _, err := c.SetTaskDone(ctx, secondTaskID(t, c, p.ID), true); err != nil {
 		t.Fatalf("SetTaskDone(second): %v", err)
 	}
 	drainInit(d.Update, d.reload())
