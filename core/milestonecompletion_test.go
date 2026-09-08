@@ -141,6 +141,70 @@ func TestAddingATaskClearsAnExistingAcknowledgement(t *testing.T) {
 	}
 }
 
+// An empty Milestone is never complete and AckMilestoneComplete on it has
+// nothing to suppress — there is no signal to have fired.
+func TestEmptyMilestoneNeverSignals(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "Empty", categoryID(t, c, "Programming"))
+	m := mustAddMilestone(t, c, p.ID, "Alpha")
+
+	if got := milestoneByID(t, c, p.ID, m.ID); got.CompletionAcked {
+		t.Errorf("CompletionAcked = true for a fresh, empty Milestone, want false")
+	}
+	// Acknowledging it anyway is a harmless no-op — there is nothing to
+	// re-prompt for once a Task does arrive.
+	if _, err := c.AckMilestoneComplete(ctx, m.ID); err != nil {
+		t.Fatalf("AckMilestoneComplete: %v", err)
+	}
+	only := mustAddMilestoneTask(t, c, m.ID, "only")
+	if got := milestoneByID(t, c, p.ID, m.ID); got.CompletionAcked {
+		t.Errorf("CompletionAcked = true after a Task was added, want cleared")
+	}
+	if _, signal, err := c.SetTaskDone(ctx, only.ID, true); err != nil {
+		t.Fatalf("SetTaskDone: %v", err)
+	} else if signal == nil || signal.ID != m.ID {
+		t.Errorf("signal = %+v, want the Milestone to signal once it actually completes", signal)
+	}
+}
+
+// Both Confirm and Decline acknowledge the Milestone through the same core
+// call — core tracks no separate "declined" state, only whether the user has
+// been asked — so Decline (like Confirm) suppresses the signal until a
+// change reopens it.
+func TestAckMilestoneCompleteAsDeclineAlsoSuppressesTheSignal(t *testing.T) {
+	c, _ := newTestCore(t)
+	ctx := context.Background()
+	p := mustCreateProject(t, c, "Decline", categoryID(t, c, "Programming"))
+	m := mustAddMilestone(t, c, p.ID, "Alpha")
+	only := mustAddMilestoneTask(t, c, m.ID, "only")
+
+	if _, signal, err := c.SetTaskDone(ctx, only.ID, true); err != nil {
+		t.Fatalf("SetTaskDone: %v", err)
+	} else if signal == nil {
+		t.Fatal("signal = nil, want the completed Milestone")
+	}
+
+	// The TUI's Decline answer is this same call; the Milestone stays
+	// functionally open (Done Tasks are untouched) but does not re-prompt.
+	if _, err := c.AckMilestoneComplete(ctx, m.ID); err != nil {
+		t.Fatalf("AckMilestoneComplete (decline): %v", err)
+	}
+	if got := milestoneByID(t, c, p.ID, m.ID); !got.CompletionAcked {
+		t.Errorf("CompletionAcked = false after declining, want true")
+	}
+
+	another := mustAddMilestoneTask(t, c, m.ID, "another")
+	if got := milestoneByID(t, c, p.ID, m.ID); got.CompletionAcked {
+		t.Errorf("CompletionAcked = true after adding a Task post-decline, want cleared")
+	}
+	if _, signal, err := c.SetTaskDone(ctx, another.ID, true); err != nil {
+		t.Fatalf("SetTaskDone(another): %v", err)
+	} else if signal == nil || signal.ID != m.ID {
+		t.Errorf("signal = %+v, want the Milestone to signal again after re-completing", signal)
+	}
+}
+
 func TestMoveTaskToMilestoneClearsAnExistingAcknowledgement(t *testing.T) {
 	c, _ := newTestCore(t)
 	ctx := context.Background()
