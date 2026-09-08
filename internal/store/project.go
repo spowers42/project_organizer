@@ -11,7 +11,7 @@ import (
 )
 
 // projectColumns is the SELECT list for reading a core.Project.
-const projectColumns = "id, name, description, category_id, lifecycle"
+const projectColumns = "id, name, description, category_id, lifecycle, priority"
 
 // scanProject reads one core.Project from a row-like source.
 func scanProject(sc interface{ Scan(...any) error }) (core.Project, error) {
@@ -19,7 +19,7 @@ func scanProject(sc interface{ Scan(...any) error }) (core.Project, error) {
 		p         core.Project
 		lifecycle string
 	)
-	if err := sc.Scan(&p.ID, &p.Name, &p.Description, &p.CategoryID, &lifecycle); err != nil {
+	if err := sc.Scan(&p.ID, &p.Name, &p.Description, &p.CategoryID, &lifecycle, &p.Priority); err != nil {
 		return core.Project{}, err
 	}
 	p.Lifecycle = core.Lifecycle(lifecycle)
@@ -68,6 +68,14 @@ func (s *Store) UpdateProjectLifecycle(ctx context.Context, id int64, lifecycle 
 	return s.updateProject(ctx, id,
 		"UPDATE projects SET lifecycle = ? WHERE id = ? AND archived_at IS NULL",
 		string(lifecycle), id,
+	)
+}
+
+// SetProjectPriority sets a live Project's Priority star.
+func (s *Store) SetProjectPriority(ctx context.Context, id int64, priority bool) (core.Project, error) {
+	return s.updateProject(ctx, id,
+		"UPDATE projects SET priority = ? WHERE id = ? AND archived_at IS NULL",
+		priority, id,
 	)
 }
 

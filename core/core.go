@@ -34,6 +34,9 @@ type Store interface {
 	UpdateProject(ctx context.Context, id int64, name, description string, categoryID int64) (Project, error)
 	// UpdateProjectLifecycle moves a live Project to lifecycle.
 	UpdateProjectLifecycle(ctx context.Context, id int64, lifecycle Lifecycle) (Project, error)
+	// SetProjectPriority sets a live Project's Priority star. Reports
+	// ErrProjectNotFound when no live row matches.
+	SetProjectPriority(ctx context.Context, id int64, priority bool) (Project, error)
 	// GetProject reads one live Project by id.
 	GetProject(ctx context.Context, id int64) (Project, error)
 	// ListProjects returns live Projects in creation order. An empty lifecycle
@@ -50,6 +53,9 @@ type Store interface {
 	// SetTaskDone sets a live Task's completion flag. Reports ErrTaskNotFound
 	// when no live row matches.
 	SetTaskDone(ctx context.Context, id int64, done bool) (Task, error)
+	// SetTaskPriority sets a live Task's Priority star. Reports ErrTaskNotFound
+	// when no live row matches.
+	SetTaskPriority(ctx context.Context, id int64, priority bool) (Task, error)
 	// SetTaskMilestone rewrites which scope a live Task belongs to: nil for
 	// loose, or a Milestone id to move it there. It only touches that column —
 	// the caller repositions the Task with WriteBodyOrder afterward. Reports

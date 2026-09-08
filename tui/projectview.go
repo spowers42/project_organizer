@@ -151,6 +151,25 @@ func (v *projectViewModel) toggleTask(task core.Task) tea.Cmd {
 	}
 }
 
+// toggleTaskPriority flips the selected Task's Priority star, then reloads the
+// body so the star shows. It reuses taskSavedMsg (no Milestone completion is
+// possible from a star), so the screen's Saved / reload handling applies.
+func (v *projectViewModel) toggleTaskPriority(task core.Task) tea.Cmd {
+	return func() tea.Msg {
+		_, err := v.core.SetTaskPriority(context.Background(), task.ID, !task.Priority)
+		return taskSavedMsg{err: err}
+	}
+}
+
+// toggleProjectPriority flips the viewed Project's Priority star, then reloads
+// the Project so the header shows it. It reuses projectSavedMsg.
+func (v *projectViewModel) toggleProjectPriority(current bool) tea.Cmd {
+	return func() tea.Msg {
+		_, err := v.core.SetProjectPriority(context.Background(), v.projectID, !current)
+		return projectSavedMsg{err: err}
+	}
+}
+
 // ackMilestoneComplete acknowledges a Milestone's completion — both Confirm
 // and Decline call this, so it does not re-prompt; confirmed carries which
 // answer it was, for the status message.
@@ -385,6 +404,23 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if task, ok := v.body.selectedTask(); ok && v.ready() {
 			return v.toggleTask(task)
 		}
+	case "p":
+		if task, ok := v.body.selectedTask(); ok && v.ready() {
+			return v.toggleTaskPriority(task)
+		}
+	case "P":
+		if v.ready() {
+			return v.toggleProjectPriority(v.project.Priority)
+		}
+	case "o":
+		if v.ready() {
+			v.body.toggleSort()
+			if v.body.sortByPriority {
+				v.status = "Body shown Priority-first (display only)."
+			} else {
+				v.status = "Body shown in stored order."
+			}
+		}
 	case ">":
 		if task, ok := v.body.selectedTask(); ok && v.ready() && task.MilestoneID == nil {
 			ms := v.body.milestones()
@@ -520,13 +556,14 @@ func (v *projectViewModel) View() string {
 	fmt.Fprintf(&b, "Description: %s\n", orDash(p.Description))
 	fmt.Fprintf(&b, "Category:    %s\n", v.categoryName(p.CategoryID))
 	fmt.Fprintf(&b, "Lifecycle:   %s\n", p.Lifecycle)
+	fmt.Fprintf(&b, "Priority:    %s\n", priorityLabel(p.Priority))
 	b.WriteString("\nBody:\n")
 	b.WriteString(v.body.render())
 	b.WriteString(statusBlock(v.status))
-	b.WriteString("\n↑/↓: select   shift+↑/↓: reorder   space: toggle done   t: edit Task\n")
-	b.WriteString("a: add Task   A: add Task to Milestone   m: add Milestone\n")
+	b.WriteString("\n↑/↓: select   shift+↑/↓: reorder   space: toggle done   p: star Task   t: edit Task\n")
+	b.WriteString("a: add Task   A: add Task to Milestone   m: add Milestone   o: sort Priority-first\n")
 	b.WriteString(">: move Task into Milestone   <: move Task out to Project body\n")
-	b.WriteString("e: edit Project   s: set lifecycle   d: archive   esc: back   q: quit\n")
+	b.WriteString("e: edit Project   s: set lifecycle   P: star Project   d: archive   esc: back   q: quit\n")
 	return b.String()
 }
 
@@ -547,4 +584,13 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
+}
+
+// priorityLabel renders a Project's Priority star as a word for the header:
+// a star when set, an em dash when not.
+func priorityLabel(on bool) string {
+	if on {
+		return "★ starred"
+	}
+	return "—"
 }

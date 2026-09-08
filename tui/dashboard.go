@@ -22,15 +22,16 @@ var defaultDashboardFilter = core.ProjectFilter{Lifecycle: core.Active}
 // Active Project's Next step beneath its row, opens a Project on enter, and
 // hosts the create-Project and filter overlays.
 type dashboardModel struct {
-	core      *core.Core
-	projects  []core.Project
-	nextSteps map[int64]core.Task // Project id -> its Next step, absent when none
-	cats      []core.Category
-	sel       int
-	filter    core.ProjectFilter
-	loadErr   error
-	status    string
-	overlay   overlayHost
+	core         *core.Core
+	projects     []core.Project
+	nextSteps    map[int64]core.Task // Project id -> its Next step, absent when none
+	cats         []core.Category
+	sel          int
+	filter       core.ProjectFilter
+	prioritySort bool // Priority-first display sort of the list — a view toggle, never a stored reorder
+	loadErr      error
+	status       string
+	overlay      overlayHost
 }
 
 // newDashboard builds the screen with the default (Active-only) filter; Init
@@ -67,6 +68,13 @@ type categoriesLoadedMsg struct {
 // projectSavedMsg is the result of a create / edit / lifecycle mutation. A nil
 // err means the change persisted.
 type projectSavedMsg struct {
+	err error
+}
+
+// priorityToggledMsg is the result of toggling a Project's Priority star from
+// the dashboard. A nil err means the change persisted; the dashboard then
+// reloads so the star (and any re-sort) shows.
+type priorityToggledMsg struct {
 	err error
 }
 
@@ -109,6 +117,30 @@ func (d *dashboardModel) reload() tea.Cmd {
 	return d.loadProjects
 }
 
+// visibleProjects is the Project list in display order: creation order, or
+// Priority-first (starred Projects first, stable) when the sort toggle is on.
+// The stored order is never touched — the sort lives only here (ADR 0001).
+func (d *dashboardModel) visibleProjects() []core.Project {
+	if d.prioritySort {
+		return core.ProjectsByPriority(d.projects)
+	}
+	return d.projects
+}
+
+// toggleSelectedPriority flips the Priority star on the Project under the
+// cursor, then reloads so the new state (and any re-sort) shows.
+func (d *dashboardModel) toggleSelectedPriority() tea.Cmd {
+	vis := d.visibleProjects()
+	if d.sel < 0 || d.sel >= len(vis) {
+		return nil
+	}
+	p := vis[d.sel]
+	return func() tea.Msg {
+		_, err := d.core.SetProjectPriority(context.Background(), p.ID, !p.Priority)
+		return priorityToggledMsg{err: err}
+	}
+}
+
 // createProject persists a new Project from the form's fields.
 func (d *dashboardModel) createProject(in core.ProjectInput) tea.Cmd {
 	return func() tea.Msg {
@@ -141,6 +173,13 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 		d.overlay.close()
 		d.status = "Project created."
 		return d.reload()
+	case priorityToggledMsg:
+		if msg.err != nil {
+			d.status = errorMessage(msg.err)
+			return nil
+		}
+		d.status = "Priority updated."
+		return d.reload()
 	case tea.KeyMsg:
 		return d.handleKey(msg)
 	}
@@ -166,9 +205,20 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 			d.sel++
 		}
 	case "enter":
-		if len(d.projects) > 0 {
-			id := d.projects[d.sel].ID
+		vis := d.visibleProjects()
+		if len(vis) > 0 {
+			id := vis[d.sel].ID
 			return func() tea.Msg { return openProjectMsg(id) }
+		}
+	case "p":
+		return d.toggleSelectedPriority()
+	case "s":
+		d.prioritySort = !d.prioritySort
+		d.sel = 0
+		if d.prioritySort {
+			d.status = "Sorted Priority-first."
+		} else {
+			d.status = "Sorted in creation order."
 		}
 	case "n":
 		f := newProjectForm("New Project", d.cats, nil)
@@ -211,21 +261,27 @@ func (d *dashboardModel) View() string {
 	if d.loadErr != nil {
 		b.WriteString("Could not load Projects: " + d.loadErr.Error() + "\n")
 	} else {
-		b.WriteString(renderProjectRows(d.projects, d.sel, d.nextSteps))
+		b.WriteString(renderProjectRows(d.visibleProjects(), d.sel, d.nextSteps))
 	}
 	b.WriteString(statusBlock(d.status))
-	hints := "\n↑/↓: select   enter: open   n: new Project   f: filter   q: quit\n"
-	if filtered {
-		hints = "\n↑/↓: select   enter: open   n: new Project   f: filter   c: back to Active   q: quit\n"
+	sortHint := "s: sort Priority-first"
+	if d.prioritySort {
+		sortHint = "s: sort in creation order"
 	}
-	b.WriteString(hints)
+	secondLine := "f: filter   q: quit\n"
+	if filtered {
+		secondLine = "f: filter   c: back to Active   q: quit\n"
+	}
+	b.WriteString("\n↑/↓: select   enter: open   n: new Project   p: toggle Priority   " + sortHint + "\n")
+	b.WriteString(secondLine)
 	return b.String()
 }
 
-// renderProjectRows lists Projects with a caret against the selected row, each
-// Project's lifecycle state, and — indented beneath it — the Next step the
-// Project is waiting on. A Project with no incomplete Task shows no Next-step
-// line. An empty list shows a filter-aware message.
+// renderProjectRows lists Projects with a caret against the selected row, a
+// Priority star on any starred Project, each Project's lifecycle state, and —
+// indented beneath it — the Next step the Project is waiting on. A Project with
+// no incomplete Task shows no Next-step line. An empty list shows a
+// filter-aware message.
 func renderProjectRows(projects []core.Project, selected int, nextSteps map[int64]core.Task) string {
 	if len(projects) == 0 {
 		return "No Projects match the current filter.\n"
@@ -236,7 +292,7 @@ func renderProjectRows(projects []core.Project, selected int, nextSteps map[int6
 		if i == selected {
 			marker = "> "
 		}
-		fmt.Fprintf(&b, "%s%s  [%s]\n", marker, p.Name, p.Lifecycle)
+		fmt.Fprintf(&b, "%s%s%s  [%s]\n", marker, priorityStar(p.Priority), p.Name, p.Lifecycle)
 		if step, ok := nextSteps[p.ID]; ok {
 			fmt.Fprintf(&b, "      Next step: %s\n", step.Title)
 		}

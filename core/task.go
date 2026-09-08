@@ -9,9 +9,15 @@ import (
 
 // Task is a single actionable step. It sits either directly in a Project's
 // ordered body (a "loose" Task, MilestoneID nil) or inside a Milestone
-// (MilestoneID set). It carries an optional due date and a completion flag. Its
-// position is not exposed — it only feeds Next step resolution: loose Tasks
-// order within the Project body, Milestone Tasks within their Milestone.
+// (MilestoneID set). It carries an optional due date, an optional Priority star,
+// and a completion flag. Its position is not exposed — it only feeds Next step
+// resolution: loose Tasks order within the Project body, Milestone Tasks within
+// their Milestone.
+//
+// Priority is a boolean "star" (CONTEXT.md), not a numeric scale. Today it feeds
+// one thing: the list views offer a Priority-first sort order over it (see
+// TasksByPriority). Per CONTEXT.md it is also meant to weight the Do Next pick
+// once that exists. Toggle it with SetTaskPriority; it is independent of an edit.
 type Task struct {
 	ID          int64
 	ProjectID   int64
@@ -20,6 +26,7 @@ type Task struct {
 	DueDate     *time.Time
 	Notes       string
 	Done        bool
+	Priority    bool
 }
 
 // TaskInput carries the user-supplied fields for adding or editing a Task. The

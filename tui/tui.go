@@ -86,6 +86,16 @@ func (m *model) View() string {
 	return m.dash.View()
 }
 
+// priorityStar renders the Priority marker shown before a starred Task or
+// Project name, and an empty string when the star is off — so an unstarred row
+// takes no extra width.
+func priorityStar(on bool) string {
+	if on {
+		return "★ "
+	}
+	return ""
+}
+
 // statusBlock formats the status / error line shared by both screens. An empty
 // status renders nothing.
 func statusBlock(status string) string {

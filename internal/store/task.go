@@ -11,7 +11,7 @@ import (
 )
 
 // taskColumns is the SELECT list for reading a core.Task.
-const taskColumns = "id, project_id, milestone_id, title, due_date, notes, done"
+const taskColumns = "id, project_id, milestone_id, title, due_date, notes, done, priority"
 
 // scanTask reads one core.Task from a row-like source. Any lead targets are
 // scanned before the taskColumns fields, so callers that prepend extra columns
@@ -22,8 +22,8 @@ func scanTask(sc interface{ Scan(...any) error }, lead ...any) (core.Task, error
 		milestone sql.NullInt64
 		due       sql.NullString
 	)
-	dest := append(append(make([]any, 0, len(lead)+7), lead...),
-		&t.ID, &t.ProjectID, &milestone, &t.Title, &due, &t.Notes, &t.Done)
+	dest := append(append(make([]any, 0, len(lead)+8), lead...),
+		&t.ID, &t.ProjectID, &milestone, &t.Title, &due, &t.Notes, &t.Done, &t.Priority)
 	if err := sc.Scan(dest...); err != nil {
 		return core.Task{}, err
 	}
@@ -139,6 +139,14 @@ func (s *Store) SetTaskDone(ctx context.Context, id int64, done bool) (core.Task
 	return s.updateTask(ctx, id,
 		"UPDATE tasks SET done = ? WHERE id = ? AND archived_at IS NULL",
 		done, id,
+	)
+}
+
+// SetTaskPriority sets a live Task's Priority star.
+func (s *Store) SetTaskPriority(ctx context.Context, id int64, priority bool) (core.Task, error) {
+	return s.updateTask(ctx, id,
+		"UPDATE tasks SET priority = ? WHERE id = ? AND archived_at IS NULL",
+		priority, id,
 	)
 }
 
