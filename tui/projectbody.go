@@ -60,22 +60,83 @@ func flattenBody(body []core.BodyEntry) []bodyRow {
 	return rows
 }
 
-// projectBody is the Project view's cursor over the flattened body: the
-// selectable rows, which one is selected, and any body-load error. It maps a
-// cursor position to the core.BodyRef / taskFormTarget an action needs and
-// follows the selection across reloads. It holds no core.Body and performs no
-// persistence — the screen calls core for every mutation.
-type projectBody struct {
-	rows    []bodyRow
-	sel     int
-	loadErr error
+// sortBodyRowsByPriority returns the flattened rows with each run of sibling
+// Task rows reordered Priority-first (stable) — a run of loose Tasks, or one
+// Milestone's own Tasks. Milestone headers stay where they are and no Task
+// crosses a header, so the display sort respects the body's levels (ADR 0001).
+func sortBodyRowsByPriority(rows []bodyRow) []bodyRow {
+	out := make([]bodyRow, 0, len(rows))
+	for i := 0; i < len(rows); {
+		if rows[i].kind == milestoneHeadRow {
+			out = append(out, rows[i])
+			i++
+			continue
+		}
+		runKind := rows[i].kind // looseTaskRow or milestoneTaskRow
+		j := i
+		for j < len(rows) && rows[j].kind == runKind {
+			j++
+		}
+		out = append(out, priorityFirstRun(rows[i:j])...)
+		i = j
+	}
+	return out
 }
 
-// setBody swaps in the rows from a freshly loaded body, keeping the selection
-// index valid.
+// priorityFirstRun reorders one run of Task rows Priority-first, reusing
+// core.TasksByPriority so the view and the domain agree on what the order is.
+func priorityFirstRun(run []bodyRow) []bodyRow {
+	if len(run) < 2 {
+		return run
+	}
+	byID := make(map[int64]bodyRow, len(run))
+	tasks := make([]core.Task, len(run))
+	for i, r := range run {
+		tasks[i] = r.task
+		byID[r.task.ID] = r
+	}
+	sorted := core.TasksByPriority(tasks)
+	out := make([]bodyRow, len(run))
+	for i, tk := range sorted {
+		out[i] = byID[tk.ID]
+	}
+	return out
+}
+
+// projectBody is the Project view's cursor over the flattened body: the loaded
+// entries, the selectable rows built from them, which one is selected, and any
+// body-load error. It maps a cursor position to the core.BodyRef /
+// taskFormTarget an action needs and follows the selection across reloads. It
+// holds no core.Body and performs no persistence — the screen calls core for
+// every mutation.
+//
+// sortByPriority is a display toggle: when on, the rows are shown Priority-first
+// within each list (loose Tasks, and each Milestone's own Tasks) without ever
+// crossing a Milestone boundary. It reorders nothing stored — the entries, and
+// so the Project body (ADR 0001), are untouched.
+type projectBody struct {
+	entries        []core.BodyEntry
+	rows           []bodyRow
+	sel            int
+	sortByPriority bool
+	loadErr        error
+}
+
+// buildRows flattens the loaded entries into selectable rows, applying the
+// Priority-first display sort when it is on.
+func (p *projectBody) buildRows() {
+	rows := flattenBody(p.entries)
+	if p.sortByPriority {
+		rows = sortBodyRowsByPriority(rows)
+	}
+	p.rows = rows
+}
+
+// setBody swaps in a freshly loaded body, keeping the selection index valid.
 func (p *projectBody) setBody(entries []core.BodyEntry, loadErr error) {
 	p.loadErr = loadErr
-	p.rows = flattenBody(entries)
+	p.entries = entries
+	p.buildRows()
 	if p.sel >= len(p.rows) {
 		p.sel = 0
 	}
@@ -85,14 +146,38 @@ func (p *projectBody) setBody(entries []core.BodyEntry, loadErr error) {
 // named by keep, clamping when that row is gone.
 func (p *projectBody) apply(entries []core.BodyEntry, keep bodyRowKey) {
 	p.loadErr = nil
-	p.rows = flattenBody(entries)
+	p.entries = entries
+	p.buildRows()
+	if p.selectKey(keep) {
+		return
+	}
+	if p.sel >= len(p.rows) {
+		p.sel = 0
+	}
+}
+
+// selectKey moves the selection onto the row named by keep, reporting whether
+// such a row is present.
+func (p *projectBody) selectKey(keep bodyRowKey) bool {
 	for i, r := range p.rows {
 		if r.key() == keep {
 			p.sel = i
-			return
+			return true
 		}
 	}
-	if p.sel >= len(p.rows) {
+	return false
+}
+
+// toggleSort flips the Priority-first display sort and rebuilds the rows,
+// keeping the cursor on the same entry when it can. Nothing stored changes.
+func (p *projectBody) toggleSort() {
+	var keep bodyRowKey
+	if r, ok := p.selectedRow(); ok {
+		keep = r.key()
+	}
+	p.sortByPriority = !p.sortByPriority
+	p.buildRows()
+	if !p.selectKey(keep) && p.sel >= len(p.rows) {
 		p.sel = 0
 	}
 }
@@ -205,9 +290,10 @@ func (p *projectBody) render() string {
 
 // renderBodyRows lists the Project's body — loose Tasks and Milestones
 // interleaved in stored order, each Milestone's own Tasks nested beneath it —
-// with a caret against the selected row. A Task shows a completion checkbox, any
-// due date, and its notes; a Milestone shows a diamond and its name. An empty
-// body shows a hint; a load failure is surfaced, not hidden.
+// with a caret against the selected row. A Task shows a completion checkbox, a
+// Priority star when set, any due date, and its notes; a Milestone shows a
+// diamond and its name. An empty body shows a hint; a load failure is surfaced,
+// not hidden.
 func renderBodyRows(rows []bodyRow, selected int, loadErr error) string {
 	if loadErr != nil {
 		return "  Could not load the body: " + loadErr.Error() + "\n"
@@ -238,7 +324,7 @@ func renderBodyRows(rows []bodyRow, selected int, loadErr error) string {
 		if r.task.DueDate != nil {
 			due = "  (due " + r.task.DueDate.Format(taskDueDateLayout) + ")"
 		}
-		fmt.Fprintf(&b, "%s%s%s %s%s\n", marker, indent, box, r.task.Title, due)
+		fmt.Fprintf(&b, "%s%s%s %s%s%s\n", marker, indent, box, priorityStar(r.task.Priority), r.task.Title, due)
 		if strings.TrimSpace(r.task.Notes) != "" {
 			for _, line := range strings.Split(r.task.Notes, "\n") {
 				fmt.Fprintf(&b, "%s%s\n", noteIndent, line)

@@ -35,14 +35,20 @@ func (l Lifecycle) Valid() bool {
 }
 
 // Project is a larger, multi-step undertaking the user is tracking, classified
-// by a Category and moving through the lifecycle states. Its ordered body of
-// Tasks and Milestones arrives in a later ticket.
+// by a Category and moving through the lifecycle states.
+//
+// Priority is a boolean "star" (CONTEXT.md), not a numeric scale. Today it feeds
+// one thing: the Project list offers a Priority-first sort order over it (see
+// ProjectsByPriority). Per CONTEXT.md it is also meant to weight the Do Next
+// pick once that exists. Toggle it with SetProjectPriority; it is independent of
+// an edit.
 type Project struct {
 	ID          int64
 	Name        string
 	Description string
 	CategoryID  int64
 	Lifecycle   Lifecycle
+	Priority    bool
 }
 
 // ProjectInput carries the user-supplied fields for creating or editing a
