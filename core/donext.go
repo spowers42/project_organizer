@@ -37,18 +37,10 @@ func (c *Core) DoNext(ctx context.Context) (DoNextCandidate, bool, error) {
 	return weightedPick(candidates, c.clock.Now(), c.rand), true, nil
 }
 
-// doNextWeight computes a candidate's weight for the Do Next pick, per the v1
-// formula (staleness weighting is out of scope for v1):
-//
-//	weight := 1.0
-//	if task.Priority || project.Priority { weight *= 2.0 }
-//	switch {
-//	case task.Due == nil:                   // no change
-//	case now.After(*task.Due):        weight *= 4.0   // overdue
-//	case task.Due.Sub(now) <= 3*24h:  weight *= 3.0
-//	case task.Due.Sub(now) <= 7*24h:  weight *= 2.0
-//	case task.Due.Sub(now) <= 14*24h: weight *= 1.5
-//	}
+// doNextWeight computes a candidate's weight for the Do Next pick: the v1
+// formula from the issue, pinned by TestDoNextWeighting*. A starred Task or
+// Project doubles it; an approaching or overdue due date scales it up further,
+// topping out at 4x when overdue. Staleness weighting is out of scope for v1.
 func doNextWeight(candidate DoNextCandidate, now time.Time) float64 {
 	weight := 1.0
 	task, project := candidate.NextStep, candidate.Project
@@ -72,7 +64,10 @@ func doNextWeight(candidate DoNextCandidate, now time.Time) float64 {
 
 // weightedPick draws one candidate from candidates with probability
 // proportional to doNextWeight, using r for the single random draw it needs.
-// candidates is never empty — callers check that first.
+// candidates is never empty — callers check that first. The last candidate is
+// always reachable, even if summing the weights loses a hair of precision:
+// the loop's final iteration returns unconditionally rather than compare
+// against a possibly-rounded total.
 func weightedPick(candidates []DoNextCandidate, now time.Time, r Rand) DoNextCandidate {
 	weights := make([]float64, len(candidates))
 	total := 0.0
@@ -84,11 +79,9 @@ func weightedPick(candidates []DoNextCandidate, now time.Time, r Rand) DoNextCan
 	cumulative := 0.0
 	for i, w := range weights {
 		cumulative += w
-		if target < cumulative {
+		if target < cumulative || i == len(candidates)-1 {
 			return candidates[i]
 		}
 	}
-	// Floating-point rounding can leave target >= cumulative by a hair; fall
-	// back to the last candidate rather than a hard-to-explain panic.
-	return candidates[len(candidates)-1]
+	panic("unreachable: the last iteration above always returns")
 }
