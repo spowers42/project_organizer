@@ -37,13 +37,16 @@ func doNextCmd(c *core.Core) tea.Cmd {
 }
 
 // handleDoNextKey routes a key while the Do Next view is showing: r rerolls
-// (another draw from the same pool), anything else dismisses back to the
-// dashboard.
+// (another draw from the same pool); q/esc dismiss back to the dashboard.
+// Every other key is a no-op — it neither dismisses nor leaks through to the
+// dashboard's own bindings while this view is up.
 func (d *dashboardModel) handleDoNextKey(msg tea.KeyMsg) tea.Cmd {
-	if msg.String() == "r" {
+	switch msg.String() {
+	case "r":
 		return doNextCmd(d.core)
+	case "q", "esc":
+		d.doNext = nil
 	}
-	d.doNext = nil
 	return nil
 }
 
@@ -67,6 +70,6 @@ func renderDoNext(r *doNextResult) string {
 		fmt.Fprintf(&b, "%s%s%s\n", priorityStar(task.Priority), task.Title, due)
 		fmt.Fprintf(&b, "  in %s%s\n", priorityStar(project.Priority), project.Name)
 	}
-	b.WriteString("\nr: reroll   any other key: back to dashboard\n")
+	b.WriteString("\nr: reroll   q/esc: back to dashboard\n")
 	return b.String()
 }

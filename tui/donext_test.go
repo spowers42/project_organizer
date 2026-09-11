@@ -88,7 +88,29 @@ func TestDashboardDoNextRerollDrawsAgain(t *testing.T) {
 	}
 }
 
-func TestDashboardDoNextDismissesOnAnyOtherKey(t *testing.T) {
+func TestDashboardDoNextDismissesOnEscOrQ(t *testing.T) {
+	for _, k := range []string{"esc", "q"} {
+		c := newTestCore(t)
+		d := newDashboard(c)
+		drainInit(d.Update, d.Init())
+
+		cmd := d.Update(key("d"))
+		d.Update(cmd())
+		if d.doNext == nil {
+			t.Fatalf("pressing d did not open the Do Next view")
+		}
+
+		d.Update(key(k))
+		if d.doNext != nil {
+			t.Errorf("%q did not dismiss the Do Next view", k)
+		}
+	}
+}
+
+// A key with no assigned action in the Do Next view is a no-op: it neither
+// dismisses the view nor leaks through to the dashboard's own bindings (e.g.
+// n would otherwise open the New Project form).
+func TestDashboardDoNextUnassignedKeyIsANoop(t *testing.T) {
 	c := newTestCore(t)
 	d := newDashboard(c)
 	drainInit(d.Update, d.Init())
@@ -99,8 +121,13 @@ func TestDashboardDoNextDismissesOnAnyOtherKey(t *testing.T) {
 		t.Fatal("pressing d did not open the Do Next view")
 	}
 
-	d.Update(key("esc"))
-	if d.doNext != nil {
-		t.Error("esc did not dismiss the Do Next view")
+	if cmd := d.Update(key("n")); cmd != nil {
+		t.Error("an unassigned key produced a command, want a no-op")
+	}
+	if d.doNext == nil {
+		t.Error("an unassigned key dismissed the Do Next view, want a no-op")
+	}
+	if d.overlay.active() {
+		t.Error("an unassigned key opened the New Project overlay, want it swallowed by the Do Next view")
 	}
 }
