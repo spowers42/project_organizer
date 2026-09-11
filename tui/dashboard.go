@@ -19,8 +19,9 @@ var defaultDashboardFilter = core.ProjectFilter{Lifecycle: core.Active}
 
 // dashboardModel is the entry screen. It lists the Projects matching the
 // current filter (Active by default — the spec's "in flight"), shows each
-// Active Project's Next step beneath its row, opens a Project on enter, and
-// hosts the create-Project and filter overlays.
+// Active Project's Next step beneath its row, opens a Project on enter, hosts
+// the create-Project and filter overlays, and offers Do Next — one weighted
+// pick from those Next steps for a moment of indecision.
 type dashboardModel struct {
 	core         *core.Core
 	projects     []core.Project
@@ -32,6 +33,7 @@ type dashboardModel struct {
 	loadErr      error
 	status       string
 	overlay      overlayHost
+	doNext       *doNextResult // non-nil while the Do Next view is showing
 }
 
 // newDashboard builds the screen with the default (Active-only) filter; Init
@@ -180,6 +182,9 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 		}
 		d.status = "Priority updated."
 		return d.reload()
+	case doNextLoadedMsg:
+		d.doNext = &doNextResult{candidate: msg.candidate, ok: msg.ok, err: msg.err}
+		return nil
 	case tea.KeyMsg:
 		return d.handleKey(msg)
 	}
@@ -191,6 +196,9 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if cmd, handled := d.overlay.handleKey(msg); handled {
 		return cmd
+	}
+	if d.doNext != nil {
+		return d.handleDoNextKey(msg)
 	}
 
 	switch msg.String() {
@@ -224,6 +232,8 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		f := newProjectForm("New Project", d.cats, nil)
 		d.overlay.open(&f, func() tea.Cmd { return d.createProject(f.input()) })
 		d.status = ""
+	case "d":
+		return doNextCmd(d.core)
 	case "f":
 		ff := newFilterForm(d.cats, d.filter)
 		d.overlay.open(&ff, func() tea.Cmd {
@@ -247,6 +257,9 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 func (d *dashboardModel) View() string {
 	if d.overlay.active() {
 		return d.overlay.render() + statusBlock(d.status)
+	}
+	if d.doNext != nil {
+		return renderDoNext(d.doNext)
 	}
 
 	filtered := d.filter != defaultDashboardFilter
@@ -272,7 +285,7 @@ func (d *dashboardModel) View() string {
 	if filtered {
 		secondLine = "f: filter   c: back to Active   q: quit\n"
 	}
-	b.WriteString("\n↑/↓: select   enter: open   n: new Project   p: toggle Priority   " + sortHint + "\n")
+	b.WriteString("\n↑/↓: select   enter: open   n: new Project   p: toggle Priority   d: Do Next   " + sortHint + "\n")
 	b.WriteString(secondLine)
 	return b.String()
 }
