@@ -43,6 +43,15 @@ type projectArchivedMsg struct {
 	err error
 }
 
+// bodyRowArchivedMsg is the result of archiving the selected Milestone or Task
+// out of the Project body. A nil err means it (and, for a Milestone, its
+// Tasks) moved to the Archive; body is the reloaded Project body with the
+// archived row gone.
+type bodyRowArchivedMsg struct {
+	body []core.BodyEntry
+	err  error
+}
+
 // bodyLoadedMsg carries the result of loading the Project's ordered body.
 type bodyLoadedMsg struct {
 	body []core.BodyEntry
@@ -264,6 +273,28 @@ func (v *projectViewModel) archiveProject() tea.Cmd {
 	}
 }
 
+// archiveRow soft-deletes the selected Milestone or Task out of the Project
+// body, dispatching by row kind: a Milestone header archives that Milestone
+// (cascading to its Tasks), any other row archives that single Task. It
+// reloads the body so the archived row is gone and the cursor can land
+// somewhere sane.
+func (v *projectViewModel) archiveRow(r bodyRow) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		var err error
+		if r.kind == milestoneHeadRow {
+			err = v.core.ArchiveMilestone(ctx, r.milestone.ID)
+		} else {
+			err = v.core.ArchiveTask(ctx, r.task.ID)
+		}
+		if err != nil {
+			return bodyRowArchivedMsg{err: err}
+		}
+		body, err := v.core.ProjectBody(ctx, v.projectID)
+		return bodyRowArchivedMsg{body: body, err: err}
+	}
+}
+
 // Update advances the Project view for one message.
 func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
@@ -335,6 +366,15 @@ func (v *projectViewModel) Update(msg tea.Msg) tea.Cmd {
 		// The Project is gone from every view; return to the dashboard, which
 		// reloads without it.
 		return func() tea.Msg { return backToDashboardMsg{} }
+	case bodyRowArchivedMsg:
+		if msg.err != nil {
+			v.status = errorMessage(msg.err)
+			return nil
+		}
+		v.overlay.close()
+		v.status = "Archived."
+		v.body.setBody(msg.body, nil)
+		return nil
 	case tea.KeyMsg:
 		return v.handleKey(msg)
 	}
@@ -467,6 +507,12 @@ func (v *projectViewModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 			v.overlay.open(&cu, func() tea.Cmd { return v.archiveProject() })
 			v.status = ""
 		}
+	case "x":
+		if r, ok := v.body.selectedRow(); ok && v.ready() {
+			cu := newConfirm(archiveRowPrompt(r))
+			v.overlay.open(&cu, func() tea.Cmd { return v.archiveRow(r) })
+			v.status = ""
+		}
 	}
 	return nil
 }
@@ -478,6 +524,20 @@ func (v *projectViewModel) promptMilestoneComplete(m core.Milestone) {
 	mp := newMilestoneCompletePrompt(fmt.Sprintf("Milestone %q is complete. Confirm?", m.Name))
 	milestoneID := m.ID
 	v.overlay.open(&mp, func() tea.Cmd { return v.ackMilestoneComplete(milestoneID, mp.confirmed()) })
+}
+
+// archiveRowPrompt is the confirm text for archiving the selected body row: a
+// Milestone header names the cascade to its Tasks, any other row names just
+// that Task.
+func archiveRowPrompt(r bodyRow) string {
+	if r.kind == milestoneHeadRow {
+		return fmt.Sprintf(
+			"Archive Milestone %q? It and its Tasks move to the Archive and leave every view. Recover them with the archive CLI.",
+			r.milestone.Name)
+	}
+	return fmt.Sprintf(
+		"Archive Task %q? It moves to the Archive and leaves every view. Recover it with the archive CLI.",
+		r.task.Title)
 }
 
 // milestoneLabels is the display labels for the "move into a Milestone"
@@ -563,7 +623,8 @@ func (v *projectViewModel) View() string {
 	b.WriteString("\n↑/↓: select   shift+↑/↓: reorder   space: toggle done   p: star Task   t: edit Task\n")
 	b.WriteString("a: add Task   A: add Task to Milestone   m: add Milestone   o: sort Priority-first\n")
 	b.WriteString(">: move Task into Milestone   <: move Task out to Project body\n")
-	b.WriteString("e: edit Project   s: set lifecycle   P: star Project   d: archive   esc: back   q: quit\n")
+	b.WriteString("x: archive Milestone/Task   e: edit Project   s: set lifecycle   P: star Project\n")
+	b.WriteString("d: archive Project   esc: back   q: quit\n")
 	return b.String()
 }
 
