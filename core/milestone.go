@@ -111,6 +111,13 @@ func (c *Core) AddMilestoneAfter(ctx context.Context, projectID int64, after Bod
 	return m, nil
 }
 
+// GetMilestone reads a single Milestone back by id, without its Tasks
+// populated (use MilestoneTasks for those). ErrMilestoneNotFound if it does
+// not exist or has been archived.
+func (c *Core) GetMilestone(ctx context.Context, id int64) (Milestone, error) {
+	return c.store.GetMilestone(ctx, id)
+}
+
 // ProjectBody returns a Project's ordered body: its loose Tasks and Milestones
 // interleaved in stored order. ErrProjectNotFound if projectID does not name a
 // live Project.
