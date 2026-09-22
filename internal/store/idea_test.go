@@ -24,7 +24,7 @@ func TestPromoteIdeaRecordsPromotedProjectLink(t *testing.T) {
 	}
 	catID := cats[0].ID
 
-	idea, err := st.CreateIdea(ctx, "Build a shed", "in the backyard", catID)
+	idea, err := st.CreateIdea(ctx, "Build a shed", "in the backyard", "needs pressure-treated lumber", catID)
 	if err != nil {
 		t.Fatalf("CreateIdea: %v", err)
 	}

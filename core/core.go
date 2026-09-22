@@ -94,22 +94,20 @@ type Store interface {
 	InsertMilestone(ctx context.Context, projectID int64, name string) (Milestone, error)
 
 	// CreateIdea inserts an Idea and returns it as stored.
-	CreateIdea(ctx context.Context, name, description string, categoryID int64) (Idea, error)
+	CreateIdea(ctx context.Context, name, description, notes string, categoryID int64) (Idea, error)
 	// GetIdea reads one live Idea by id. Reports ErrIdeaNotFound when it is
 	// missing or archived.
 	GetIdea(ctx context.Context, id int64) (Idea, error)
 	// ListIdeas returns live Ideas in creation order.
 	ListIdeas(ctx context.Context) ([]Idea, error)
-	// ArchiveIdea stamps archived_at on a live Idea. Reports ErrIdeaNotFound
-	// when no live row matches. Plain deletion only; promotion goes through
-	// PromoteIdea so the Project creation and the Idea's archival-with-link
-	// happen in one transaction.
+	// ArchiveIdea stamps archived_at on a live Idea (plain delete; see
+	// PromoteIdea for promotion). Reports ErrIdeaNotFound when no live row
+	// matches.
 	ArchiveIdea(ctx context.Context, id int64, at time.Time) error
-	// PromoteIdea turns a live Idea into a Project in one transaction: it
-	// copies the Idea's name, description, and Category into a new Project at
-	// lifecycle, then stamps the Idea's archived_at and links it to that
-	// Project — so promotion never leaves an orphan Project or an unlinked
-	// Idea. Reports ErrIdeaNotFound when id does not name a live Idea.
+	// PromoteIdea creates a Project from a live Idea and archives the Idea
+	// with a link to it, in one transaction. See
+	// docs/workflows/idea-promotion.md. Reports ErrIdeaNotFound when id does
+	// not name a live Idea.
 	PromoteIdea(ctx context.Context, id int64, lifecycle Lifecycle, at time.Time) (Project, error)
 }
 

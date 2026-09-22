@@ -11,7 +11,7 @@ import (
 )
 
 // ideaColumns is the SELECT list for reading a core.Idea.
-const ideaColumns = "id, name, description, category_id, promoted_project_id"
+const ideaColumns = "id, name, description, notes, category_id, promoted_project_id"
 
 // scanIdea reads one core.Idea from a row-like source.
 func scanIdea(sc interface{ Scan(...any) error }) (core.Idea, error) {
@@ -19,7 +19,7 @@ func scanIdea(sc interface{ Scan(...any) error }) (core.Idea, error) {
 		i        core.Idea
 		promoted sql.NullInt64
 	)
-	if err := sc.Scan(&i.ID, &i.Name, &i.Description, &i.CategoryID, &promoted); err != nil {
+	if err := sc.Scan(&i.ID, &i.Name, &i.Description, &i.Notes, &i.CategoryID, &promoted); err != nil {
 		return core.Idea{}, err
 	}
 	if promoted.Valid {
@@ -30,10 +30,10 @@ func scanIdea(sc interface{ Scan(...any) error }) (core.Idea, error) {
 }
 
 // CreateIdea inserts an Idea and returns it as stored.
-func (s *Store) CreateIdea(ctx context.Context, name, description string, categoryID int64) (core.Idea, error) {
+func (s *Store) CreateIdea(ctx context.Context, name, description, notes string, categoryID int64) (core.Idea, error) {
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO ideas (name, description, category_id) VALUES (?, ?, ?)",
-		name, description, categoryID,
+		"INSERT INTO ideas (name, description, notes, category_id) VALUES (?, ?, ?, ?)",
+		name, description, notes, categoryID,
 	)
 	if err != nil {
 		return core.Idea{}, fmt.Errorf("creating idea: %w", err)
@@ -82,9 +82,9 @@ func (s *Store) ListIdeas(ctx context.Context) ([]core.Idea, error) {
 	return ideas, nil
 }
 
-// ArchiveIdea soft-deletes a live Idea by stamping archived_at, carrying no
-// link — the plain-delete path. An Idea that is missing or already archived
-// yields core.ErrIdeaNotFound.
+// ArchiveIdea soft-deletes a live Idea by stamping archived_at (plain delete;
+// see PromoteIdea for the promotion path). Reports core.ErrIdeaNotFound when
+// no live row matches.
 func (s *Store) ArchiveIdea(ctx context.Context, id int64, at time.Time) error {
 	res, err := s.db.ExecContext(ctx,
 		"UPDATE ideas SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
@@ -103,12 +103,9 @@ func (s *Store) ArchiveIdea(ctx context.Context, id int64, at time.Time) error {
 	return nil
 }
 
-// PromoteIdea turns a live Idea into a Project in one transaction: it copies
-// the Idea's name, description, and Category into a new Project at lifecycle,
-// then stamps the Idea's archived_at and promoted_project_id to link it to
-// that Project. Reports core.ErrIdeaNotFound when id does not name a live
-// Idea; the transaction is rolled back on any failure, so a partial promotion
-// never persists.
+// PromoteIdea creates a Project from a live Idea and archives the Idea with a
+// link to it, in one transaction. See docs/workflows/idea-promotion.md.
+// Reports core.ErrIdeaNotFound when id does not name a live Idea.
 func (s *Store) PromoteIdea(ctx context.Context, id int64, lifecycle core.Lifecycle, at time.Time) (core.Project, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -13,11 +13,14 @@ func TestCreateIdeaShowsInList(t *testing.T) {
 	c, _ := newTestCore(t)
 	catID := categoryID(t, c, "Programming")
 
-	idea, err := c.CreateIdea(ctx, core.IdeaInput{Name: "Learn woodworking", Description: "maybe someday", CategoryID: catID})
+	idea, err := c.CreateIdea(ctx, core.IdeaInput{
+		Name: "Learn woodworking", Description: "maybe someday", Notes: "start with a workbench", CategoryID: catID,
+	})
 	if err != nil {
 		t.Fatalf("CreateIdea: %v", err)
 	}
-	if idea.Name != "Learn woodworking" || idea.Description != "maybe someday" || idea.CategoryID != catID {
+	if idea.Name != "Learn woodworking" || idea.Description != "maybe someday" ||
+		idea.Notes != "start with a workbench" || idea.CategoryID != catID {
 		t.Errorf("idea = %+v, want the given fields", idea)
 	}
 	if idea.PromotedProjectID != nil {
