@@ -34,6 +34,10 @@ type dashboardModel struct {
 	status       string
 	overlay      overlayHost
 	doNext       *doNextResult // non-nil while the Do Next view is showing
+	ideasOpen    bool          // true while the Ideas panel is showing in place of the Project list
+	ideas        []core.Idea
+	ideaSel      int
+	ideasErr     error
 }
 
 // newDashboard builds the screen with the default (Active-only) filter; Init
@@ -77,6 +81,30 @@ type projectSavedMsg struct {
 // the dashboard. A nil err means the change persisted; the dashboard then
 // reloads so the star (and any re-sort) shows.
 type priorityToggledMsg struct {
+	err error
+}
+
+// ideasLoadedMsg carries the result of an Idea list load, for the Ideas panel.
+type ideasLoadedMsg struct {
+	ideas []core.Idea
+	err   error
+}
+
+// ideaSavedMsg is the result of capturing a new Idea. A nil err means it
+// persisted.
+type ideaSavedMsg struct {
+	err error
+}
+
+// ideaDeletedMsg is the result of plain-deleting an Idea. A nil err means it
+// was archived.
+type ideaDeletedMsg struct {
+	err error
+}
+
+// ideaPromotedMsg is the result of promoting an Idea into a Project. A nil err
+// means the Project was created and the Idea archived with a link to it.
+type ideaPromotedMsg struct {
 	err error
 }
 
@@ -151,6 +179,44 @@ func (d *dashboardModel) createProject(in core.ProjectInput) tea.Cmd {
 	}
 }
 
+// loadIdeas queries core for the live Ideas shown in the Ideas panel.
+func (d *dashboardModel) loadIdeas() tea.Msg {
+	ideas, err := d.core.ListIdeas(context.Background())
+	return ideasLoadedMsg{ideas: ideas, err: err}
+}
+
+// selectedIdea is the Idea under the cursor in the Ideas panel, or false when
+// the list is empty.
+func (d *dashboardModel) selectedIdea() (core.Idea, bool) {
+	if d.ideaSel < 0 || d.ideaSel >= len(d.ideas) {
+		return core.Idea{}, false
+	}
+	return d.ideas[d.ideaSel], true
+}
+
+// createIdea persists a newly captured Idea from the form's fields.
+func (d *dashboardModel) createIdea(in core.IdeaInput) tea.Cmd {
+	return func() tea.Msg {
+		_, err := d.core.CreateIdea(context.Background(), in)
+		return ideaSavedMsg{err: err}
+	}
+}
+
+// deleteIdea plain-deletes the given Idea.
+func (d *dashboardModel) deleteIdea(id int64) tea.Cmd {
+	return func() tea.Msg {
+		return ideaDeletedMsg{err: d.core.DeleteIdea(context.Background(), id)}
+	}
+}
+
+// promoteIdea promotes the given Idea into a Project.
+func (d *dashboardModel) promoteIdea(id int64) tea.Cmd {
+	return func() tea.Msg {
+		_, err := d.core.PromoteIdea(context.Background(), id)
+		return ideaPromotedMsg{err: err}
+	}
+}
+
 // Update advances the dashboard for one message and returns any follow-up
 // command.
 func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
@@ -185,6 +251,36 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 	case doNextLoadedMsg:
 		d.doNext = &doNextResult{candidate: msg.candidate, ok: msg.ok, err: msg.err}
 		return nil
+	case ideasLoadedMsg:
+		d.ideas, d.ideasErr = msg.ideas, msg.err
+		if d.ideaSel >= len(d.ideas) {
+			d.ideaSel = 0
+		}
+		return nil
+	case ideaSavedMsg:
+		if msg.err != nil {
+			d.status = errorMessage(msg.err)
+			return nil // keep the overlay open so the user can fix and retry
+		}
+		d.overlay.close()
+		d.status = "Idea captured."
+		return d.loadIdeas
+	case ideaDeletedMsg:
+		if msg.err != nil {
+			d.status = errorMessage(msg.err)
+			return nil
+		}
+		d.overlay.close()
+		d.status = "Idea deleted."
+		return d.loadIdeas
+	case ideaPromotedMsg:
+		if msg.err != nil {
+			d.status = errorMessage(msg.err)
+			return nil
+		}
+		d.overlay.close()
+		d.status = "Idea promoted to Project."
+		return tea.Batch(d.loadIdeas, d.reload())
 	case tea.KeyMsg:
 		return d.handleKey(msg)
 	}
@@ -199,6 +295,9 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if d.doNext != nil {
 		return d.handleDoNextKey(msg)
+	}
+	if d.ideasOpen {
+		return d.handleIdeasKey(msg)
 	}
 
 	switch msg.String() {
@@ -234,6 +333,11 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		d.status = ""
 	case "d":
 		return doNextCmd(d.core)
+	case "i":
+		d.ideasOpen = true
+		d.ideaSel = 0
+		d.status = ""
+		return d.loadIdeas
 	case "f":
 		ff := newFilterForm(d.cats, d.filter)
 		d.overlay.open(&ff, func() tea.Cmd {
@@ -253,6 +357,67 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+// handleIdeasKey routes a key while the Ideas panel is showing: up/down
+// selects, n captures a new Idea, x plain-deletes the selected one (with
+// confirmation), p promotes it into a Project (with confirmation), and
+// esc/i return to the main dashboard.
+func (d *dashboardModel) handleIdeasKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "i":
+		d.ideasOpen = false
+		d.status = ""
+	case "up", "k":
+		if d.ideaSel > 0 {
+			d.ideaSel--
+		}
+	case "down", "j":
+		if d.ideaSel < len(d.ideas)-1 {
+			d.ideaSel++
+		}
+	case "n":
+		f := newIdeaForm("New Idea", d.cats)
+		d.overlay.open(&f, func() tea.Cmd { return d.createIdea(f.input()) })
+		d.status = ""
+	case "x":
+		if idea, ok := d.selectedIdea(); ok {
+			cu := newConfirm(fmt.Sprintf("Delete idea %q? It moves to the Archive.", idea.Name))
+			d.overlay.open(&cu, func() tea.Cmd { return d.deleteIdea(idea.ID) })
+			d.status = ""
+		}
+	case "p":
+		if idea, ok := d.selectedIdea(); ok {
+			cu := newConfirm(fmt.Sprintf("Promote %q to a Project?", idea.Name))
+			d.overlay.open(&cu, func() tea.Cmd { return d.promoteIdea(idea.ID) })
+			d.status = ""
+		}
+	}
+	return nil
+}
+
+// renderIdeas draws the Ideas panel: the list with a caret against the
+// selected row, or a graceful empty-state message, plus its key hints.
+func (d *dashboardModel) renderIdeas() string {
+	var b strings.Builder
+	b.WriteString("Ideas\n\n")
+	switch {
+	case d.ideasErr != nil:
+		b.WriteString("Could not load Ideas: " + d.ideasErr.Error() + "\n")
+	case len(d.ideas) == 0:
+		b.WriteString("No Ideas captured yet.\n")
+	default:
+		for i, idea := range d.ideas {
+			marker := "  "
+			if i == d.ideaSel {
+				marker = "> "
+			}
+			fmt.Fprintf(&b, "%s%s\n", marker, idea.Name)
+		}
+	}
+	b.WriteString(statusBlock(d.status))
+	b.WriteString("\n↑/↓: select   n: capture Idea   p: promote to Project   x: delete   esc: back\n")
+	return b.String()
+}
+
 // View renders the dashboard, its overlays, and the key hints.
 func (d *dashboardModel) View() string {
 	if d.overlay.active() {
@@ -260,6 +425,9 @@ func (d *dashboardModel) View() string {
 	}
 	if d.doNext != nil {
 		return renderDoNext(d.doNext)
+	}
+	if d.ideasOpen {
+		return d.renderIdeas()
 	}
 
 	filtered := d.filter != defaultDashboardFilter
@@ -285,7 +453,7 @@ func (d *dashboardModel) View() string {
 	if filtered {
 		secondLine = "f: filter   c: back to Active   q: quit\n"
 	}
-	b.WriteString("\n↑/↓: select   enter: open   n: new Project   p: toggle Priority   d: Do Next   " + sortHint + "\n")
+	b.WriteString("\n↑/↓: select   enter: open   n: new Project   p: toggle Priority   d: Do Next   i: Ideas   " + sortHint + "\n")
 	b.WriteString(secondLine)
 	return b.String()
 }

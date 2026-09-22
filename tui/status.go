@@ -30,6 +30,10 @@ func errorMessage(err error) string {
 		return "That Milestone no longer exists."
 	case errors.Is(err, errTaskDueDateFormat):
 		return "Due date must be written as YYYY-MM-DD."
+	case errors.Is(err, core.ErrEmptyIdeaName):
+		return "Idea name must not be empty."
+	case errors.Is(err, core.ErrIdeaNotFound):
+		return "That Idea no longer exists."
 	default:
 		return err.Error()
 	}

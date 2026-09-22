@@ -92,6 +92,23 @@ type Store interface {
 	// InsertMilestone appends a Milestone to the end of a Project's body and
 	// returns it as stored; placement is a follow-up WriteBodyOrder.
 	InsertMilestone(ctx context.Context, projectID int64, name string) (Milestone, error)
+
+	// CreateIdea inserts an Idea and returns it as stored.
+	CreateIdea(ctx context.Context, name, description, notes string, categoryID int64) (Idea, error)
+	// GetIdea reads one live Idea by id. Reports ErrIdeaNotFound when it is
+	// missing or archived.
+	GetIdea(ctx context.Context, id int64) (Idea, error)
+	// ListIdeas returns live Ideas in creation order.
+	ListIdeas(ctx context.Context) ([]Idea, error)
+	// ArchiveIdea stamps archived_at on a live Idea (plain delete; see
+	// PromoteIdea for promotion). Reports ErrIdeaNotFound when no live row
+	// matches.
+	ArchiveIdea(ctx context.Context, id int64, at time.Time) error
+	// PromoteIdea creates a Project from a live Idea and archives the Idea
+	// with a link to it, in one transaction. See
+	// docs/workflows/idea-promotion.md. Reports ErrIdeaNotFound when id does
+	// not name a live Idea.
+	PromoteIdea(ctx context.Context, id int64, lifecycle Lifecycle, at time.Time) (Project, error)
 }
 
 // Core holds the injected dependencies and exposes the application operations.
