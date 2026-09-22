@@ -72,7 +72,6 @@ type ProjectFilter struct {
 // errors.Is; the entrypoints turn them into user-facing messages.
 var (
 	ErrEmptyProjectName = errors.New("project name must not be empty")
-	ErrCategoryNotFound = errors.New("category not found")
 	ErrProjectNotFound  = errors.New("project not found")
 	ErrInvalidLifecycle = errors.New("invalid lifecycle state")
 )

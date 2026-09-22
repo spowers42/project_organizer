@@ -27,6 +27,17 @@ type Store interface {
 	ListCategories(ctx context.Context) ([]Category, error)
 	// CategoryExists reports whether a Category with the given id exists.
 	CategoryExists(ctx context.Context, id int64) (bool, error)
+	// CreateCategory inserts a Category and returns it as stored.
+	CreateCategory(ctx context.Context, name string) (Category, error)
+	// RenameCategory rewrites a Category's name. Reports ErrCategoryNotFound
+	// when no row matches.
+	RenameCategory(ctx context.Context, id int64, name string) (Category, error)
+	// CategoryReferenced reports whether any Project or Idea — including
+	// archived ones — references the Category via category_id.
+	CategoryReferenced(ctx context.Context, id int64) (bool, error)
+	// DeleteCategory removes a Category row. Reports ErrCategoryNotFound when
+	// no row matches.
+	DeleteCategory(ctx context.Context, id int64) error
 
 	// CreateProject inserts a Project and returns it as stored.
 	CreateProject(ctx context.Context, name, description string, categoryID int64, lifecycle Lifecycle) (Project, error)
