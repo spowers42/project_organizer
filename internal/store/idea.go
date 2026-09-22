@@ -103,12 +103,14 @@ func (s *Store) UpdateIdea(ctx context.Context, id int64, name, description, not
 }
 
 // ArchiveIdea soft-deletes a live Idea by stamping archived_at (plain delete;
-// see PromoteIdea for the promotion path). Reports core.ErrIdeaNotFound when
-// no live row matches.
+// see PromoteIdea for the promotion path). An Idea has no children, so this
+// never cascades; it still gets its own cascade batch (a batch of one) so it
+// reads the same way through RestoreArchived / PurgeArchived as any other
+// archived entity. Reports core.ErrIdeaNotFound when no live row matches.
 func (s *Store) ArchiveIdea(ctx context.Context, id int64, at time.Time) error {
 	res, err := s.db.ExecContext(ctx,
-		"UPDATE ideas SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
-		at.UTC().Format(time.RFC3339Nano), id,
+		"UPDATE ideas SET archived_at = ?, archive_batch = ? WHERE id = ? AND archived_at IS NULL",
+		at.UTC().Format(time.RFC3339Nano), archiveBatch(core.ArchivedIdea, id), id,
 	)
 	if err != nil {
 		return fmt.Errorf("archiving idea %d: %w", id, err)
@@ -156,8 +158,8 @@ func (s *Store) PromoteIdea(ctx context.Context, id int64, lifecycle core.Lifecy
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		"UPDATE ideas SET archived_at = ?, promoted_project_id = ? WHERE id = ?",
-		at.UTC().Format(time.RFC3339Nano), projectID, id,
+		"UPDATE ideas SET archived_at = ?, archive_batch = ?, promoted_project_id = ? WHERE id = ?",
+		at.UTC().Format(time.RFC3339Nano), archiveBatch(core.ArchivedIdea, id), projectID, id,
 	); err != nil {
 		return core.Project{}, fmt.Errorf("archiving promoted idea %d: %w", id, err)
 	}

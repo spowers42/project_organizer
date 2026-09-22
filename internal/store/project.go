@@ -79,12 +79,24 @@ func (s *Store) SetProjectPriority(ctx context.Context, id int64, priority bool)
 	)
 }
 
-// ArchiveProject soft-deletes a live Project by stamping archived_at. A Project
-// that is missing or already archived yields core.ErrProjectNotFound.
+// ArchiveProject soft-deletes a live Project by stamping archived_at, and
+// cascades to its live Milestones and Tasks — both its loose Tasks and the
+// Tasks of the Milestones just cascaded — stamping every row with the same
+// cascade batch in one transaction. See docs/workflows/archive-cascade.md. A
+// Project that is missing or already archived yields core.ErrProjectNotFound.
 func (s *Store) ArchiveProject(ctx context.Context, id int64, at time.Time) error {
-	res, err := s.db.ExecContext(ctx,
-		"UPDATE projects SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
-		at.UTC().Format(time.RFC3339Nano), id,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("archiving project %d: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	ts := at.UTC().Format(time.RFC3339Nano)
+	batch := archiveBatch(core.ArchivedProject, id)
+
+	res, err := tx.ExecContext(ctx,
+		"UPDATE projects SET archived_at = ?, archive_batch = ? WHERE id = ? AND archived_at IS NULL",
+		ts, batch, id,
 	)
 	if err != nil {
 		return fmt.Errorf("archiving project %d: %w", id, err)
@@ -95,6 +107,23 @@ func (s *Store) ArchiveProject(ctx context.Context, id int64, at time.Time) erro
 	}
 	if n == 0 {
 		return core.ErrProjectNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE milestones SET archived_at = ?, archive_batch = ? WHERE project_id = ? AND archived_at IS NULL",
+		ts, batch, id,
+	); err != nil {
+		return fmt.Errorf("cascading archive to milestones of project %d: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE tasks SET archived_at = ?, archive_batch = ? WHERE project_id = ? AND archived_at IS NULL",
+		ts, batch, id,
+	); err != nil {
+		return fmt.Errorf("cascading archive to tasks of project %d: %w", id, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("archiving project %d: %w", id, err)
 	}
 	return nil
 }
