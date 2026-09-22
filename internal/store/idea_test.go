@@ -57,6 +57,60 @@ func TestPromoteIdeaRecordsPromotedProjectLink(t *testing.T) {
 	}
 }
 
+func TestUpdateIdeaRewritesFields(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "organizer.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	cats, err := st.ListCategories(ctx)
+	if err != nil || len(cats) < 2 {
+		t.Fatalf("ListCategories: cats=%v err=%v", cats, err)
+	}
+
+	idea, err := st.CreateIdea(ctx, "Build a shed", "in the backyard", "needs lumber", cats[0].ID)
+	if err != nil {
+		t.Fatalf("CreateIdea: %v", err)
+	}
+
+	edited, err := st.UpdateIdea(ctx, idea.ID, "Build a bigger shed", "in the front yard", "needs more lumber", cats[1].ID)
+	if err != nil {
+		t.Fatalf("UpdateIdea: %v", err)
+	}
+	if edited.Name != "Build a bigger shed" || edited.Description != "in the front yard" ||
+		edited.Notes != "needs more lumber" || edited.CategoryID != cats[1].ID {
+		t.Errorf("edited idea = %+v, want the rewritten fields", edited)
+	}
+
+	got, err := st.GetIdea(ctx, idea.ID)
+	if err != nil {
+		t.Fatalf("GetIdea: %v", err)
+	}
+	if got != edited {
+		t.Errorf("GetIdea after update = %+v, want %+v", got, edited)
+	}
+}
+
+func TestUpdateIdeaUnknownIdeaIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "organizer.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	cats, err := st.ListCategories(ctx)
+	if err != nil || len(cats) == 0 {
+		t.Fatalf("ListCategories: cats=%v err=%v", cats, err)
+	}
+
+	if _, err := st.UpdateIdea(ctx, 99999, "Name", "", "", cats[0].ID); err != core.ErrIdeaNotFound {
+		t.Errorf("err = %v, want ErrIdeaNotFound", err)
+	}
+}
+
 func TestPromoteIdeaUnknownIdeaIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(filepath.Join(t.TempDir(), "organizer.db"))

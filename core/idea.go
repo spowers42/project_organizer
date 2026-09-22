@@ -38,11 +38,8 @@ var (
 // Category. The name is trimmed and must be non-empty; the Category must
 // exist.
 func (c *Core) CreateIdea(ctx context.Context, in IdeaInput) (Idea, error) {
-	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		return Idea{}, ErrEmptyIdeaName
-	}
-	if err := c.requireCategory(ctx, in.CategoryID); err != nil {
+	name, err := c.validateIdeaInput(ctx, in)
+	if err != nil {
 		return Idea{}, err
 	}
 	return c.store.CreateIdea(ctx, name, in.Description, in.Notes, in.CategoryID)
@@ -51,6 +48,34 @@ func (c *Core) CreateIdea(ctx context.Context, in IdeaInput) (Idea, error) {
 // ListIdeas returns every live Idea, in creation order.
 func (c *Core) ListIdeas(ctx context.Context) ([]Idea, error) {
 	return c.store.ListIdeas(ctx)
+}
+
+// EditIdea rewrites a live Idea's name, description, notes, and Category.
+// Same validation as CreateIdea; ErrIdeaNotFound if id does not name a live
+// Idea — and a missing Idea is reported as such even when the input is also
+// invalid.
+func (c *Core) EditIdea(ctx context.Context, id int64, in IdeaInput) (Idea, error) {
+	if _, err := c.store.GetIdea(ctx, id); err != nil {
+		return Idea{}, err
+	}
+	name, err := c.validateIdeaInput(ctx, in)
+	if err != nil {
+		return Idea{}, err
+	}
+	return c.store.UpdateIdea(ctx, id, name, in.Description, in.Notes, in.CategoryID)
+}
+
+// validateIdeaInput trims and checks the user-supplied Idea fields shared by
+// CreateIdea and EditIdea, returning the cleaned name.
+func (c *Core) validateIdeaInput(ctx context.Context, in IdeaInput) (string, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return "", ErrEmptyIdeaName
+	}
+	if err := c.requireCategory(ctx, in.CategoryID); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // DeleteIdea plain-deletes a live Idea into the Archive, carrying no link.
