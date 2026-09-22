@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/spowers42/project_organizer/core"
 )
 
 func TestIdeaFormStartsBlankOnTheFirstCategory(t *testing.T) {
-	f := newIdeaForm("New Idea", testCategories())
+	f := newIdeaForm("New Idea", testCategories(), nil)
 
 	in := f.input()
 	if in.Name != "" || in.Description != "" || in.Notes != "" {
@@ -16,8 +19,28 @@ func TestIdeaFormStartsBlankOnTheFirstCategory(t *testing.T) {
 	}
 }
 
+func TestIdeaFormEditModePreFillsEveryField(t *testing.T) {
+	f := newIdeaForm("Edit Idea", testCategories(), &core.Idea{
+		Name:        "Learn pottery",
+		Description: "wheel throwing",
+		Notes:       "check local studios",
+		CategoryID:  20,
+	})
+
+	in := f.input()
+	if in.Name != "Learn pottery" || in.Description != "wheel throwing" || in.Notes != "check local studios" {
+		t.Errorf("edit form input = %+v, want the Idea's fields", in)
+	}
+	if in.CategoryID != 20 {
+		t.Errorf("CategoryID = %d, want the Idea's Category (20)", in.CategoryID)
+	}
+	if !strings.Contains(f.render(), "Edit Idea") {
+		t.Errorf("render = %q, want the edit title", f.render())
+	}
+}
+
 func TestIdeaFormTypingLandsInTheFocusedFieldIncludingNotes(t *testing.T) {
-	f := newIdeaForm("New Idea", testCategories())
+	f := newIdeaForm("New Idea", testCategories(), nil)
 
 	for _, m := range typeString("Learn pottery") {
 		f.update(m)
@@ -49,13 +72,13 @@ func TestIdeaFormTypingLandsInTheFocusedFieldIncludingNotes(t *testing.T) {
 }
 
 func TestIdeaFormEscCancelsAndEnterSubmits(t *testing.T) {
-	f := newIdeaForm("New Idea", testCategories())
+	f := newIdeaForm("New Idea", testCategories(), nil)
 
 	if done, submitted := f.update(key("esc")); !done || submitted {
 		t.Errorf("esc: done=%v submitted=%v, want done=true submitted=false", done, submitted)
 	}
 
-	f = newIdeaForm("New Idea", testCategories())
+	f = newIdeaForm("New Idea", testCategories(), nil)
 	if done, submitted := f.update(key("enter")); !done || !submitted {
 		t.Errorf("enter: done=%v submitted=%v, want done=true submitted=true", done, submitted)
 	}

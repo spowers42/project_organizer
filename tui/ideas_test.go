@@ -68,6 +68,52 @@ func TestDashboardCaptureIdeaShowsInPanel(t *testing.T) {
 	}
 }
 
+func TestDashboardEditIdeaRewritesFields(t *testing.T) {
+	ctx := context.Background()
+	c := newTestCore(t)
+	catID := firstCategoryID(t, c)
+	if _, err := c.CreateIdea(ctx, core.IdeaInput{Name: "old name", Description: "old desc", CategoryID: catID}); err != nil {
+		t.Fatalf("CreateIdea: %v", err)
+	}
+
+	d := newDashboard(c)
+	drainInit(d.Update, d.Init())
+
+	d.Update(key("i"))
+	drainInit(d.Update, d.loadIdeas)
+
+	d.Update(key("e"))
+	if !d.overlay.active() {
+		t.Fatal("pressing e in the Ideas panel did not open the edit form")
+	}
+	for i := 0; i < len("old name"); i++ {
+		d.Update(key("backspace"))
+	}
+	for _, k := range typeString("new name") {
+		d.Update(k)
+	}
+	cmd := d.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("submitting the edit form produced no command")
+	}
+	if cmd = d.Update(cmd()); cmd == nil { // apply ideaSavedMsg
+		t.Fatal("saving the edited Idea produced no follow-up reload")
+	}
+	d.Update(cmd()) // apply ideasLoadedMsg
+
+	if d.overlay.active() {
+		t.Error("Idea form stayed open after a successful edit")
+	}
+
+	ideas, err := c.ListIdeas(ctx)
+	if err != nil {
+		t.Fatalf("ListIdeas: %v", err)
+	}
+	if len(ideas) != 1 || ideas[0].Name != "new name" || ideas[0].Description != "old desc" {
+		t.Errorf("ListIdeas = %+v, want the renamed Idea with its other fields unchanged", ideas)
+	}
+}
+
 func TestDashboardDeleteIdeaRemovesItFromPanel(t *testing.T) {
 	ctx := context.Background()
 	c := newTestCore(t)

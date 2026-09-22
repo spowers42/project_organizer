@@ -38,24 +38,40 @@ type ideaForm struct {
 	focus  ideaFormField
 }
 
-// newIdeaForm builds a blank capture form over the shared Category list,
-// defaulting to the first Category.
-func newIdeaForm(title string, categories []core.Category) ideaForm {
+// newIdeaForm builds a form over the shared Category list. When initial is
+// non-nil the form starts in edit mode, pre-filled from that Idea (including
+// its Category); otherwise it is a blank capture form defaulting to the first
+// Category.
+func newIdeaForm(title string, categories []core.Category, initial *core.Idea) ideaForm {
 	labels := make([]string, len(categories))
 	ids := make([]int64, len(categories))
 	for i, c := range categories {
 		labels[i] = c.Name
 		ids[i] = c.ID
 	}
-	return ideaForm{
+
+	f := ideaForm{
 		title:  title,
 		name:   newTextInput(""),
 		desc:   newTextInput(""),
-		cats:   newPicker(labels, 0),
 		catIDs: ids,
 		notes:  newTextArea(""),
 		focus:  ideaFieldName,
 	}
+	start := 0
+	if initial != nil {
+		f.name = newTextInput(initial.Name)
+		f.desc = newTextInput(initial.Description)
+		f.notes = newTextArea(initial.Notes)
+		for i, id := range ids {
+			if id == initial.CategoryID {
+				start = i
+				break
+			}
+		}
+	}
+	f.cats = newPicker(labels, start)
+	return f
 }
 
 // update advances the form for one key. done is true once the user submits

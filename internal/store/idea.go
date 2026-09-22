@@ -82,6 +82,26 @@ func (s *Store) ListIdeas(ctx context.Context) ([]core.Idea, error) {
 	return ideas, nil
 }
 
+// UpdateIdea rewrites a live Idea's name, description, notes, and Category.
+// Reports core.ErrIdeaNotFound when no live row matches.
+func (s *Store) UpdateIdea(ctx context.Context, id int64, name, description, notes string, categoryID int64) (core.Idea, error) {
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE ideas SET name = ?, description = ?, notes = ?, category_id = ? WHERE id = ? AND archived_at IS NULL",
+		name, description, notes, categoryID, id,
+	)
+	if err != nil {
+		return core.Idea{}, fmt.Errorf("updating idea %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return core.Idea{}, fmt.Errorf("updating idea %d: %w", id, err)
+	}
+	if n == 0 {
+		return core.Idea{}, core.ErrIdeaNotFound
+	}
+	return s.GetIdea(ctx, id)
+}
+
 // ArchiveIdea soft-deletes a live Idea by stamping archived_at (plain delete;
 // see PromoteIdea for the promotion path). Reports core.ErrIdeaNotFound when
 // no live row matches.

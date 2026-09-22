@@ -100,6 +100,9 @@ type Store interface {
 	GetIdea(ctx context.Context, id int64) (Idea, error)
 	// ListIdeas returns live Ideas in creation order.
 	ListIdeas(ctx context.Context) ([]Idea, error)
+	// UpdateIdea rewrites a live Idea's name, description, notes, and
+	// Category. Reports ErrIdeaNotFound when no live row matches.
+	UpdateIdea(ctx context.Context, id int64, name, description, notes string, categoryID int64) (Idea, error)
 	// ArchiveIdea stamps archived_at on a live Idea (plain delete; see
 	// PromoteIdea for promotion). Reports ErrIdeaNotFound when no live row
 	// matches.

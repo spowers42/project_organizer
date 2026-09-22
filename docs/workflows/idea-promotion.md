@@ -1,4 +1,4 @@
-# Idea capture, browsing, deletion, and promotion
+# Idea capture, browsing, editing, deletion, and promotion
 
 An Idea (CONTEXT.md) is a lightweight, non-Project capture of something the
 user might do later: a name, description, optional notes, and a Category. It
@@ -12,6 +12,7 @@ Projects.
 flowchart LR
     capture([Capture]) --> live[Live Idea]
     live -- browse --> live
+    live -- edit --> live
     live -- plain delete --> archived[Archived Idea\nno link]
     live -- promote --> promoted[Archived Idea\nlinked to new Project]
     promoted -.-> project[(New Project\nActive/DefaultLifecycle)]
@@ -20,6 +21,8 @@ flowchart LR
 - **Capture**: `core.CreateIdea` — name is trimmed and required, Category must
   exist.
 - **Browse**: `core.ListIdeas` — live Ideas only, creation order.
+- **Edit**: `core.EditIdea` — rewrites name, description, notes, and Category
+  on a live Idea; same validation as capture (`Store.UpdateIdea`).
 - **Plain delete**: `core.DeleteIdea` — soft-deletes with no link
   (`Store.ArchiveIdea`).
 - **Promote**: `core.PromoteIdea` — soft-deletes with a link to the Project it

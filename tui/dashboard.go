@@ -90,10 +90,11 @@ type ideasLoadedMsg struct {
 	err   error
 }
 
-// ideaSavedMsg is the result of capturing a new Idea. A nil err means it
-// persisted.
+// ideaSavedMsg is the result of capturing a new Idea or editing an existing
+// one. A nil err means it persisted; edited distinguishes the status message.
 type ideaSavedMsg struct {
-	err error
+	edited bool
+	err    error
 }
 
 // ideaDeletedMsg is the result of plain-deleting an Idea. A nil err means it
@@ -202,6 +203,14 @@ func (d *dashboardModel) createIdea(in core.IdeaInput) tea.Cmd {
 	}
 }
 
+// editIdea rewrites an existing Idea's fields from the form.
+func (d *dashboardModel) editIdea(id int64, in core.IdeaInput) tea.Cmd {
+	return func() tea.Msg {
+		_, err := d.core.EditIdea(context.Background(), id, in)
+		return ideaSavedMsg{edited: true, err: err}
+	}
+}
+
 // deleteIdea plain-deletes the given Idea.
 func (d *dashboardModel) deleteIdea(id int64) tea.Cmd {
 	return func() tea.Msg {
@@ -263,7 +272,11 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 			return nil // keep the overlay open so the user can fix and retry
 		}
 		d.overlay.close()
-		d.status = "Idea captured."
+		if msg.edited {
+			d.status = "Idea updated."
+		} else {
+			d.status = "Idea captured."
+		}
 		return d.loadIdeas
 	case ideaDeletedMsg:
 		if msg.err != nil {
@@ -358,9 +371,9 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 }
 
 // handleIdeasKey routes a key while the Ideas panel is showing: up/down
-// selects, n captures a new Idea, x plain-deletes the selected one (with
-// confirmation), p promotes it into a Project (with confirmation), and
-// esc/i return to the main dashboard.
+// selects, n captures a new Idea, e edits the selected one, x plain-deletes
+// it (with confirmation), p promotes it into a Project (with confirmation),
+// and esc/i return to the main dashboard.
 func (d *dashboardModel) handleIdeasKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc", "i":
@@ -375,9 +388,15 @@ func (d *dashboardModel) handleIdeasKey(msg tea.KeyMsg) tea.Cmd {
 			d.ideaSel++
 		}
 	case "n":
-		f := newIdeaForm("New Idea", d.cats)
+		f := newIdeaForm("New Idea", d.cats, nil)
 		d.overlay.open(&f, func() tea.Cmd { return d.createIdea(f.input()) })
 		d.status = ""
+	case "e":
+		if idea, ok := d.selectedIdea(); ok {
+			f := newIdeaForm("Edit Idea", d.cats, &idea)
+			d.overlay.open(&f, func() tea.Cmd { return d.editIdea(idea.ID, f.input()) })
+			d.status = ""
+		}
 	case "x":
 		if idea, ok := d.selectedIdea(); ok {
 			cu := newConfirm(fmt.Sprintf("Delete idea %q? It moves to the Archive.", idea.Name))
@@ -414,7 +433,7 @@ func (d *dashboardModel) renderIdeas() string {
 		}
 	}
 	b.WriteString(statusBlock(d.status))
-	b.WriteString("\n↑/↓: select   n: capture Idea   p: promote to Project   x: delete   esc: back\n")
+	b.WriteString("\n↑/↓: select   n: capture Idea   e: edit   p: promote to Project   x: delete   esc: back\n")
 	return b.String()
 }
 

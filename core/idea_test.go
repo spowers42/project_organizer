@@ -84,6 +84,79 @@ func TestDeleteIdeaPlainDeleteRemovesFromListAndCarriesNoLink(t *testing.T) {
 	}
 }
 
+func TestEditIdeaRewritesFields(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestCore(t)
+	catID := categoryID(t, c, "Programming")
+	otherCatID := categoryID(t, c, "Course")
+
+	idea, err := c.CreateIdea(ctx, core.IdeaInput{
+		Name: "Learn woodworking", Description: "maybe someday", Notes: "start with a workbench", CategoryID: catID,
+	})
+	if err != nil {
+		t.Fatalf("CreateIdea: %v", err)
+	}
+
+	edited, err := c.EditIdea(ctx, idea.ID, core.IdeaInput{
+		Name: "Learn joinery", Description: "narrower scope", Notes: "buy chisels", CategoryID: otherCatID,
+	})
+	if err != nil {
+		t.Fatalf("EditIdea: %v", err)
+	}
+	if edited.Name != "Learn joinery" || edited.Description != "narrower scope" ||
+		edited.Notes != "buy chisels" || edited.CategoryID != otherCatID {
+		t.Errorf("edited idea = %+v, want the rewritten fields", edited)
+	}
+
+	ideas, err := c.ListIdeas(ctx)
+	if err != nil {
+		t.Fatalf("ListIdeas: %v", err)
+	}
+	if len(ideas) != 1 || ideas[0].Name != "Learn joinery" {
+		t.Errorf("ListIdeas = %+v, want the edited Idea", ideas)
+	}
+}
+
+func TestEditIdeaRejectsEmptyName(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestCore(t)
+	catID := categoryID(t, c, "Programming")
+
+	idea, err := c.CreateIdea(ctx, core.IdeaInput{Name: "Something", CategoryID: catID})
+	if err != nil {
+		t.Fatalf("CreateIdea: %v", err)
+	}
+
+	if _, err := c.EditIdea(ctx, idea.ID, core.IdeaInput{Name: "   ", CategoryID: catID}); !errors.Is(err, core.ErrEmptyIdeaName) {
+		t.Errorf("err = %v, want ErrEmptyIdeaName", err)
+	}
+}
+
+func TestEditIdeaRejectsUnknownCategory(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestCore(t)
+	catID := categoryID(t, c, "Programming")
+
+	idea, err := c.CreateIdea(ctx, core.IdeaInput{Name: "Something", CategoryID: catID})
+	if err != nil {
+		t.Fatalf("CreateIdea: %v", err)
+	}
+
+	if _, err := c.EditIdea(ctx, idea.ID, core.IdeaInput{Name: "Something", CategoryID: 99999}); !errors.Is(err, core.ErrCategoryNotFound) {
+		t.Errorf("err = %v, want ErrCategoryNotFound", err)
+	}
+}
+
+func TestEditIdeaUnknownIdeaIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestCore(t)
+	catID := categoryID(t, c, "Programming")
+
+	if _, err := c.EditIdea(ctx, 99999, core.IdeaInput{Name: "Something", CategoryID: catID}); !errors.Is(err, core.ErrIdeaNotFound) {
+		t.Errorf("err = %v, want ErrIdeaNotFound", err)
+	}
+}
+
 func TestPromoteIdeaCreatesProjectWithCopiedFieldsInDefaultState(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newTestCore(t)
