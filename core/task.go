@@ -145,6 +145,12 @@ func (c *Core) SetTaskDone(ctx context.Context, id int64, done bool) (Task, *Mil
 	return task, &m, nil
 }
 
+// GetTask reads a single Task back by id. ErrTaskNotFound if it does not
+// exist or has been archived.
+func (c *Core) GetTask(ctx context.Context, id int64) (Task, error) {
+	return c.store.GetTask(ctx, id)
+}
+
 // ProjectTasks returns a Project's loose Tasks in body order.
 // ErrProjectNotFound if id does not name a live Project.
 func (c *Core) ProjectTasks(ctx context.Context, projectID int64) ([]Task, error) {

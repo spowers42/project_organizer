@@ -27,6 +27,17 @@ type Store interface {
 	ListCategories(ctx context.Context) ([]Category, error)
 	// CategoryExists reports whether a Category with the given id exists.
 	CategoryExists(ctx context.Context, id int64) (bool, error)
+	// CreateCategory inserts a Category and returns it as stored.
+	CreateCategory(ctx context.Context, name string) (Category, error)
+	// RenameCategory rewrites a Category's name. Reports ErrCategoryNotFound
+	// when no row matches.
+	RenameCategory(ctx context.Context, id int64, name string) (Category, error)
+	// CategoryReferenced reports whether any Project or Idea — including
+	// archived ones — references the Category via category_id.
+	CategoryReferenced(ctx context.Context, id int64) (bool, error)
+	// DeleteCategory removes a Category row. Reports ErrCategoryNotFound when
+	// no row matches.
+	DeleteCategory(ctx context.Context, id int64) error
 
 	// CreateProject inserts a Project and returns it as stored.
 	CreateProject(ctx context.Context, name, description string, categoryID int64, lifecycle Lifecycle) (Project, error)
@@ -42,8 +53,10 @@ type Store interface {
 	// ListProjects returns live Projects in creation order. An empty lifecycle
 	// or a zero categoryID is not filtered on.
 	ListProjects(ctx context.Context, lifecycle Lifecycle, categoryID int64) ([]Project, error)
-	// ArchiveProject stamps archived_at on a live Project, reporting
-	// ErrProjectNotFound when no live row matches.
+	// ArchiveProject stamps archived_at on a live Project and cascades to its
+	// live Milestones and Tasks, all sharing one cascade batch, in one
+	// transaction. Reports ErrProjectNotFound when no live row matches. See
+	// docs/workflows/archive-cascade.md.
 	ArchiveProject(ctx context.Context, id int64, at time.Time) error
 
 	// UpdateTask rewrites a live Task's title, due date, and notes; a nil
@@ -72,6 +85,14 @@ type Store interface {
 	// acknowledgement flag. Reports ErrMilestoneNotFound when no live row
 	// matches.
 	SetMilestoneCompletionAck(ctx context.Context, id int64, acked bool) (Milestone, error)
+	// ArchiveMilestone stamps archived_at on a live Milestone and cascades to
+	// its live Tasks, sharing one cascade batch, in one transaction. Reports
+	// ErrMilestoneNotFound when no live row matches. See
+	// docs/workflows/archive-cascade.md.
+	ArchiveMilestone(ctx context.Context, id int64, at time.Time) error
+	// ArchiveTask stamps archived_at on a live Task. Reports ErrTaskNotFound
+	// when no live row matches.
+	ArchiveTask(ctx context.Context, id int64, at time.Time) error
 
 	// ReadBody returns a Project's ordered body — its loose Tasks and Milestones
 	// interleaved by stored position, each Milestone carrying its own ordered
@@ -112,6 +133,18 @@ type Store interface {
 	// docs/workflows/idea-promotion.md. Reports ErrIdeaNotFound when id does
 	// not name a live Idea.
 	PromoteIdea(ctx context.Context, id int64, lifecycle Lifecycle, at time.Time) (Project, error)
+
+	// ListArchived returns every archived row across Projects, Milestones,
+	// Tasks, and Ideas.
+	ListArchived(ctx context.Context) ([]ArchivedEntity, error)
+	// RestoreArchived reverses the archive call that archived ref's row,
+	// restoring every row sharing its cascade batch. Reports
+	// ErrArchivedNotFound when ref does not name a currently archived row.
+	RestoreArchived(ctx context.Context, ref ArchiveRef) error
+	// PurgeArchived permanently deletes ref's row along with every row sharing
+	// its cascade batch. Reports ErrArchivedNotFound when ref does not name a
+	// currently archived row.
+	PurgeArchived(ctx context.Context, ref ArchiveRef) error
 }
 
 // Core holds the injected dependencies and exposes the application operations.

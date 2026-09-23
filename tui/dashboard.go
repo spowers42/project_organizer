@@ -38,6 +38,9 @@ type dashboardModel struct {
 	ideas        []core.Idea
 	ideaSel      int
 	ideasErr     error
+
+	categoriesOpen bool // true while the Category management panel is showing in place of the Project list
+	categorySel    int
 }
 
 // newDashboard builds the screen with the default (Active-only) filter; Init
@@ -106,6 +109,21 @@ type ideaDeletedMsg struct {
 // ideaPromotedMsg is the result of promoting an Idea into a Project. A nil err
 // means the Project was created and the Idea archived with a link to it.
 type ideaPromotedMsg struct {
+	err error
+}
+
+// categorySavedMsg is the result of creating a new Category or renaming an
+// existing one. A nil err means it persisted; edited distinguishes the
+// status message.
+type categorySavedMsg struct {
+	edited bool
+	err    error
+}
+
+// categoryDeletedMsg is the result of deleting a Category. A nil err means it
+// was removed; core.ErrCategoryInUse means it is still referenced by a
+// Project or Idea and was left in place.
+type categoryDeletedMsg struct {
 	err error
 }
 
@@ -226,6 +244,40 @@ func (d *dashboardModel) promoteIdea(id int64) tea.Cmd {
 	}
 }
 
+// selectedCategory is the Category under the cursor in the Category
+// management panel, or false when the list is empty.
+func (d *dashboardModel) selectedCategory() (core.Category, bool) {
+	if d.categorySel < 0 || d.categorySel >= len(d.cats) {
+		return core.Category{}, false
+	}
+	return d.cats[d.categorySel], true
+}
+
+// createCategory persists a newly named Category.
+func (d *dashboardModel) createCategory(name string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := d.core.CreateCategory(context.Background(), name)
+		return categorySavedMsg{err: err}
+	}
+}
+
+// renameCategory rewrites an existing Category's name.
+func (d *dashboardModel) renameCategory(id int64, name string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := d.core.RenameCategory(context.Background(), id, name)
+		return categorySavedMsg{edited: true, err: err}
+	}
+}
+
+// deleteCategory removes the given Category. core.ErrCategoryInUse comes back
+// while it is still referenced by a Project or Idea; the Category is left in
+// place.
+func (d *dashboardModel) deleteCategory(id int64) tea.Cmd {
+	return func() tea.Msg {
+		return categoryDeletedMsg{err: d.core.DeleteCategory(context.Background(), id)}
+	}
+}
+
 // Update advances the dashboard for one message and returns any follow-up
 // command.
 func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
@@ -238,6 +290,9 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 		return nil
 	case categoriesLoadedMsg:
 		d.cats = msg.cats
+		if d.categorySel >= len(d.cats) {
+			d.categorySel = 0
+		}
 		if msg.err != nil {
 			d.status = errorMessage(msg.err)
 		}
@@ -294,6 +349,26 @@ func (d *dashboardModel) Update(msg tea.Msg) tea.Cmd {
 		d.overlay.close()
 		d.status = "Idea promoted to Project."
 		return tea.Batch(d.loadIdeas, d.reload())
+	case categorySavedMsg:
+		if msg.err != nil {
+			d.status = errorMessage(msg.err)
+			return nil // keep the overlay open so the user can fix and retry
+		}
+		d.overlay.close()
+		if msg.edited {
+			d.status = "Category renamed."
+		} else {
+			d.status = "Category added."
+		}
+		return loadCategoriesCmd(d.core)
+	case categoryDeletedMsg:
+		if msg.err != nil {
+			d.status = errorMessage(msg.err)
+			return nil // keep the overlay open so the user can see why and dismiss
+		}
+		d.overlay.close()
+		d.status = "Category deleted."
+		return loadCategoriesCmd(d.core)
 	case tea.KeyMsg:
 		return d.handleKey(msg)
 	}
@@ -311,6 +386,9 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if d.ideasOpen {
 		return d.handleIdeasKey(msg)
+	}
+	if d.categoriesOpen {
+		return d.handleCategoriesKey(msg)
 	}
 
 	switch msg.String() {
@@ -351,6 +429,10 @@ func (d *dashboardModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		d.ideaSel = 0
 		d.status = ""
 		return d.loadIdeas
+	case "C":
+		d.categoriesOpen = true
+		d.categorySel = 0
+		d.status = ""
 	case "f":
 		ff := newFilterForm(d.cats, d.filter)
 		d.overlay.open(&ff, func() tea.Cmd {
@@ -413,6 +495,66 @@ func (d *dashboardModel) handleIdeasKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+// handleCategoriesKey routes a key while the Category management panel is
+// showing: up/down selects, n adds a new Category, e renames the selected
+// one, x deletes it (with confirmation, rejected with a status message while
+// it is still referenced by a Project or Idea), and esc/C return to the main
+// dashboard.
+func (d *dashboardModel) handleCategoriesKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "C":
+		d.categoriesOpen = false
+		d.status = ""
+	case "up", "k":
+		if d.categorySel > 0 {
+			d.categorySel--
+		}
+	case "down", "j":
+		if d.categorySel < len(d.cats)-1 {
+			d.categorySel++
+		}
+	case "n":
+		f := newCategoryForm("New Category", nil)
+		d.overlay.open(&f, func() tea.Cmd { return d.createCategory(f.value()) })
+		d.status = ""
+	case "e":
+		if cat, ok := d.selectedCategory(); ok {
+			f := newCategoryForm("Rename Category", &cat)
+			d.overlay.open(&f, func() tea.Cmd { return d.renameCategory(cat.ID, f.value()) })
+			d.status = ""
+		}
+	case "x":
+		if cat, ok := d.selectedCategory(); ok {
+			cu := newConfirm(fmt.Sprintf("Delete category %q?", cat.Name))
+			d.overlay.open(&cu, func() tea.Cmd { return d.deleteCategory(cat.ID) })
+			d.status = ""
+		}
+	}
+	return nil
+}
+
+// renderCategories draws the Category management panel: the shared Category
+// list with a caret against the selected row, or a graceful empty-state
+// message, plus its key hints.
+func (d *dashboardModel) renderCategories() string {
+	var b strings.Builder
+	b.WriteString("Categories\n\n")
+	if len(d.cats) == 0 {
+		b.WriteString("No Categories yet.\n")
+	} else {
+		for i, cat := range d.cats {
+			marker := "  "
+			if i == d.categorySel {
+				marker = "> "
+			}
+			fmt.Fprintf(&b, "%s%s\n", marker, cat.Name)
+		}
+	}
+	b.WriteString(statusBlock(d.status))
+	b.WriteString("\n↑/↓: select   n: add Category   e: rename   x: delete   esc: back\n")
+	return b.String()
+}
+
 // renderIdeas draws the Ideas panel: the list with a caret against the
 // selected row, or a graceful empty-state message, plus its key hints.
 func (d *dashboardModel) renderIdeas() string {
@@ -448,6 +590,9 @@ func (d *dashboardModel) View() string {
 	if d.ideasOpen {
 		return d.renderIdeas()
 	}
+	if d.categoriesOpen {
+		return d.renderCategories()
+	}
 
 	filtered := d.filter != defaultDashboardFilter
 
@@ -472,7 +617,7 @@ func (d *dashboardModel) View() string {
 	if filtered {
 		secondLine = "f: filter   c: back to Active   q: quit\n"
 	}
-	b.WriteString("\n↑/↓: select   enter: open   n: new Project   p: toggle Priority   d: Do Next   i: Ideas   " + sortHint + "\n")
+	b.WriteString("\n↑/↓: select   enter: open   n: new Project   p: toggle Priority   d: Do Next   i: Ideas   C: Categories   " + sortHint + "\n")
 	b.WriteString(secondLine)
 	return b.String()
 }

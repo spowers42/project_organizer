@@ -72,7 +72,6 @@ type ProjectFilter struct {
 // errors.Is; the entrypoints turn them into user-facing messages.
 var (
 	ErrEmptyProjectName = errors.New("project name must not be empty")
-	ErrCategoryNotFound = errors.New("category not found")
 	ErrProjectNotFound  = errors.New("project not found")
 	ErrInvalidLifecycle = errors.New("invalid lifecycle state")
 )
@@ -133,9 +132,10 @@ func (c *Core) GetProject(ctx context.Context, id int64) (Project, error) {
 
 // ArchiveProject soft-deletes a Project into the Archive: it disappears from
 // every normal view (dashboard, Project list, lookups) but is not destroyed and
-// can be recovered through the archive CLI. ErrProjectNotFound if id does not
-// name a live Project. Cascading to a Project's Milestones and Tasks arrives
-// with those entities.
+// can be recovered through the archive CLI. It cascades to the Project's live
+// Milestones and Tasks, all leaving those views together — see
+// docs/workflows/archive-cascade.md. ErrProjectNotFound if id does not name a
+// live Project.
 func (c *Core) ArchiveProject(ctx context.Context, id int64) error {
 	return c.store.ArchiveProject(ctx, id, c.clock.Now())
 }

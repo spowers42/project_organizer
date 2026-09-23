@@ -16,6 +16,10 @@ func errorMessage(err error) string {
 		return "Project name must not be empty."
 	case errors.Is(err, core.ErrCategoryNotFound):
 		return "That Category no longer exists."
+	case errors.Is(err, core.ErrEmptyCategoryName):
+		return "Category name must not be empty."
+	case errors.Is(err, core.ErrCategoryInUse):
+		return "That Category is still used by a Project or Idea and cannot be deleted."
 	case errors.Is(err, core.ErrProjectNotFound):
 		return "That Project no longer exists."
 	case errors.Is(err, core.ErrInvalidLifecycle):
